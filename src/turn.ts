@@ -1,6 +1,8 @@
+import { randomUUID } from "node:crypto";
+
 import type { Content, Message, Space } from "spectrum-ts";
 
-import { attachSpaceToStudent, type Student } from "./db.ts";
+import { attachSpaceToStudent, backfillMessageStudent, recordMessage, type Student } from "./db.ts";
 import { env } from "./env.ts";
 
 const WELCOME =
@@ -41,6 +43,32 @@ export function summarize(contents: Content[]): string {
   return [text, files.length ? `[${files.join(", ")}]` : ""].filter(Boolean).join(" ").trim();
 }
 
+/**
+ * Send and persist. This line does not echo outbound messages back into the
+ * stream, so a reply is only ever recorded here — and Phase 3's context needs
+ * both sides of the conversation to read coherently.
+ *
+ * Persistence failures are logged, never thrown: the message has already gone
+ * out, and surfacing an error would make the caller apologize for a reply the
+ * student can see.
+ */
+export async function say(space: Space, studentId: string | null, text: string) {
+  const sent = await space.send(text);
+
+  try {
+    await recordMessage({
+      studentId,
+      // Providers may not hand back the outbound message; a synthetic id still
+      // satisfies the UNIQUE column and keeps the transcript complete.
+      photonMessageId: sent?.id ?? `local-${randomUUID()}`,
+      direction: "outbound",
+      content: text,
+    });
+  } catch (error) {
+    console.error("failed to persist outbound message", { spaceId: space.id, error });
+  }
+}
+
 const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
 
 export async function handleTurn(space: Space, message: Message, student: Student | null) {
@@ -49,24 +77,28 @@ export async function handleTurn(space: Space, message: Message, student: Studen
   const files = attachmentsOf(contents);
 
   try {
-    if (!student) {
-      if (isStart(text)) {
-        await attachSpaceToStudent(env.DEMO_PHONE, space.id);
-        await space.send(WELCOME); // Text-only, no links — first-contact deliverability.
+    let current = student;
+
+    if (!current) {
+      if (!isStart(text)) {
+        await say(space, null, "Text me “Start Sift” to get going.");
         return;
       }
-      await space.send("Text me “Start Sift” to get going.");
+
+      current = await attachSpaceToStudent(env.DEMO_PHONE, space.id);
+      await backfillMessageStudent(message.id, current.id);
+      await say(space, current.id, WELCOME); // Text-only, no links — first-contact deliverability.
       return;
     }
 
     // Ingest turns get the literal pre-reply from the demo script before the
     // (Phase 2) extraction call, so the wait reads as work rather than silence.
     if (files.length > 0) {
-      await space.send("Sifting...");
+      await say(space, current.id, "Sifting...");
       await space.responding(async () => {
         // Phase 2 replaces this with classify → extract → rows.
         const names = files.map((file) => file.name).join(", ");
-        await space.send(`Got ${names}. I can't read these yet — that lands next.`);
+        await say(space, current.id, `Got ${names}. I can't read these yet — that lands next.`);
       });
       return;
     }
@@ -75,7 +107,7 @@ export async function handleTurn(space: Space, message: Message, student: Studen
 
     await space.responding(async () => {
       // Phase 2 replaces this with the intent classifier.
-      await space.send(`echo: ${text}`);
+      await say(space, current.id, `echo: ${text}`);
     });
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
