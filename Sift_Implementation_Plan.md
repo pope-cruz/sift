@@ -46,12 +46,23 @@ The repo also ships a `photon` CLI skill (`photon projects show`, `photon spectr
 
 Deliverability implications for the demo: the student always texts first (`Start Sift`), so the proactive reminder goes to an **existing** conversation — safe. Keep the welcome message link-free. Aim for ≥3 user messages in the conversation before the proactive send (the demo script naturally does this).
 
-## LLM: Claude Haiku 4.5 (free credits)
+## LLM: split by call — Haiku 4.5 for routing, Sonnet 5 for reading
 
-- **Model ID:** `claude-haiku-4-5` · $1/M input, $5/M output · 200K context, 64K max output.
-- Supports everything Sift needs: **structured outputs** (use `client.messages.parse()` with `zodOutputFormat(schema)` — this satisfies the brief's "validate with Zod before database writes" requirement natively), **vision** (café screenshot), and **PDF input** (base64 `document` block; the 200K-context page cap of 100 pages is far above any syllabus).
-- One SDK: `@anthropic-ai/sdk`. Three call shapes: classify intent (structured output, tiny), extract from PDF/image (document/image block + structured output), and answer/plan (plain text generation with retrieved context in the prompt).
-- Budget sanity: a full demo run is well under $0.05 at Haiku pricing; free credits are a non-issue.
+One SDK (`@anthropic-ai/sdk`), one file (`llm.ts`), two models chosen per call shape:
+
+| Call | Model | Why |
+|---|---|---|
+| classify intent | `claude-haiku-4-5` · $1/$5 per MTok | A 5-way label emitting ~20 tokens. No `effort` — Haiku 4.5 rejects it. |
+| extract from PDF / image | `claude-sonnet-5` · $3/$15 ($2/$10 intro through **2026-08-31**, so the whole project) | The one place accuracy is visible in the demo. `effort: "medium"`. |
+| answer / plan | `claude-haiku-4-5` | 2–5 sentences of prose from assembled context. |
+
+Both models support **structured outputs** — `client.messages.parse()` with `zodOutputFormat(schema)`, which satisfies the brief's "validate with Zod before database writes" natively — plus vision and base64 PDF `document` blocks (page cap 100 on 200K-context models, far above any syllabus).
+
+**Sonnet 5 runs adaptive thinking by default** (a change from Sonnet 4.6), and `max_tokens` caps thinking *plus* the answer together — hence the deliberately generous ceilings in `llm.ts` (8000 for syllabus, 4000 for place). `effort` tunes thinking depth; it is not a verbosity control.
+
+Budget, measured with `count_tokens` against the real demo files: the 3-page syllabus is **7,713** input tokens on Sonnet (6,945 on Haiku), the café screenshot **2,083** (1,574). A full end-to-end demo run lands near **$0.10** on this split — roughly 250 runs inside a $25 budget, with tuning iterations on the syllabus as the dominant real cost. Set a hard spend limit in the console rather than trusting the estimate.
+
+Open question for Phase 2: Sonnet with thinking is slower than Haiku on a 3-page PDF. The demo beat is `Sifting...` → reply, so **time the extraction turn during rehearsal**; if it drags the two-minute video, drop `effort` to `low` before switching models.
 
 ## Data model (Supabase)
 
