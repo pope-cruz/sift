@@ -1,7 +1,10 @@
 import type { Content, Message, Space } from "spectrum-ts";
 
-import { attachSpaceToStudent, type Student } from "./db.ts";
+import { attachSpaceToStudent, pendingOf, type Student } from "./db.ts";
 import { env } from "./env.ts";
+import { ingest, resolvePending } from "./ingest.ts";
+import { classify } from "./llm.ts";
+import type { Intent } from "./schemas.ts";
 
 const WELCOME =
   "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
@@ -43,6 +46,25 @@ export function summarize(contents: Content[]): string {
 
 const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
 
+/**
+ * Non-ingest intents. `retrieve` and `plan` are Phase 3 — they need the context
+ * assembly (open actions, recent items, recent messages) that doesn't exist
+ * yet, so they hold rather than guess.
+ */
+function reply(intent: Exclude<Intent, "ingest">, text: string) {
+  switch (intent) {
+    case "retrieve":
+    case "plan":
+      return "I've got that saved — pulling it back out is what I'm learning next. Keep sending me things in the meantime.";
+    case "clarify":
+      return text
+        ? "I'm not sure what to do with that one — can you give me a bit more?"
+        : "Didn't quite catch that — what would you like me to remember?";
+    case "chitchat":
+      return "Hey! Send me a syllabus, a screenshot, or anything you want to remember and I'll keep track of it.";
+  }
+}
+
 export async function handleTurn(space: Space, message: Message, student: Student | null) {
   const contents = parts(message);
   const text = textOf(contents);
@@ -59,23 +81,39 @@ export async function handleTurn(space: Space, message: Message, student: Studen
       return;
     }
 
-    // Ingest turns get the literal pre-reply from the demo script before the
-    // (Phase 2) extraction call, so the wait reads as work rather than silence.
-    if (files.length > 0) {
+    if (!text && files.length === 0) return; // Nothing actionable (voice, contact card, etc.).
+
+    // A question Sift asked last turn gets first refusal on a text-only reply.
+    // Sending a new file instead is itself an answer — they've moved on — so
+    // files skip this and the pending question is dropped by the next resolve.
+    const pending = files.length === 0 ? pendingOf(student) : null;
+    if (pending) {
+      const resolved = await space.responding(() =>
+        resolvePending({ student, pending, text }),
+      );
+      if (resolved) {
+        await space.send(resolved);
+        return;
+      }
+      // They ignored the question — fall through and route the turn normally.
+    }
+
+    // A turn carrying a file is unambiguously ingest, so skip the classifier
+    // call and its latency — the caption rides along as extraction context.
+    const intent = files.length > 0 ? "ingest" : await classify({ text, files });
+
+    if (intent === "ingest") {
+      // The literal pre-reply from the demo script, sent before the extraction
+      // call so the wait reads as work rather than silence.
       await space.send("Sifting...");
       await space.responding(async () => {
-        // Phase 2 replaces this with classify → extract → rows.
-        const names = files.map((file) => file.name).join(", ");
-        await space.send(`Got ${names}. I can't read these yet — that lands next.`);
+        await space.send(await ingest({ student, text, files }));
       });
       return;
     }
 
-    if (!text) return; // Nothing actionable (voice, contact card, etc.).
-
     await space.responding(async () => {
-      // Phase 2 replaces this with the intent classifier.
-      await space.send(`echo: ${text}`);
+      await space.send(reply(intent, text));
     });
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
