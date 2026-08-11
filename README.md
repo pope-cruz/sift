@@ -23,3 +23,7 @@ npm run start
 - [Spectrum docs](https://photon.codes/docs/spectrum-ts)
 - Edit `src/index.ts` to replace the echo loop with real agent logic.
 - Add more providers from `spectrum-ts/providers/*`.
+
+## Phase 3 validation
+
+See [PHASE3.md](./PHASE3.md) for the retrieve/plan architecture, verification commands, bounded live demo, and current limitations.

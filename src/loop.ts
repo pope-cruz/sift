@@ -4,6 +4,7 @@ import { parts, summarize } from "./content.ts";
 import { getStudentBySpaceId, recordMessage } from "./db.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
 import { handleTurn } from "./turn.ts";
+import { sendRecovery } from "./recovery.ts";
 
 // Delivery signals, not conversation. This line emits `read` receipts as their
 // own messages; they must never reach a turn or the messages table.
@@ -43,6 +44,10 @@ export async function runLoop(app: SpectrumInstance) {
         messageId: message.id,
         error: safeDiagnostic(error),
       });
+      // The database may be down while iMessage is healthy. Give the student
+      // one useful recovery message without trying to persist it; if the
+      // provider is also down, sendRecovery keeps the stream alive.
+      await sendRecovery((text) => space.send(text));
     }
   }
 }

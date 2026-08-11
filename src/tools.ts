@@ -18,33 +18,6 @@ import {
 } from "./db.ts";
 import { remindAtFor, today } from "./dates.ts";
 
-/**
- * Everything the student has saved, rendered into the system prompt each turn.
- *
- * This used to be a `list_saved` tool and the model simply didn't call it —
- * answering "do you have cafe recs?" from its own assumptions while a saved
- * café sat in the table, and passing a filename where an id belonged. State the
- * model always needs is not a tool call; it's context.
- */
-export async function describeSaved(student: Student): Promise<string> {
-  const items = await listSavedItems(student.id);
-  if (items.length === 0) return "The student has saved nothing yet.";
-
-  return JSON.stringify(
-    items.map((item) => ({
-      id: item.id,
-      type: item.type,
-      title: item.title,
-      summary: item.summary,
-      dates: item.actions.map((action) => ({
-        description: action.description,
-        due: action.due_date,
-        tracked: action.status === "open",
-      })),
-    })),
-  );
-}
-
 export const TOOLS: Anthropic.Tool[] = [
   {
     name: "update_dates",

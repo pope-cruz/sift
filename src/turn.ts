@@ -6,7 +6,7 @@ import { attachmentsOf, parts, textOf } from "./content.ts";
 import {
   attachSpaceToStudent,
   backfillMessageStudent,
-  getRecentMessages,
+  getContextRows,
   recordMessage,
   type Student,
 } from "./db.ts";
@@ -14,13 +14,14 @@ import { safeDiagnostic } from "./diagnostics.ts";
 import { env } from "./env.ts";
 import { ingest } from "./ingest.ts";
 import { respond } from "./llm.ts";
-import { describeSaved, runTool, TOOLS } from "./tools.ts";
+import { today } from "./dates.ts";
+import { assembleContext, fallbackReply, renderContext, validateReply } from "./planner.ts";
+import { sendRecovery } from "./recovery.ts";
+import { runTool, TOOLS } from "./tools.ts";
 
 const WELCOME =
   "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
   "and I'll keep track of it and remind you when it matters. Ask me what's coming up any time.";
-
-const TROUBLE = "Hmm, I had trouble sifting that — mind sending it again?";
 
 const CANT_READ =
   "I can't read that one yet — send me a PDF, a screenshot, or just type it and I'll keep track of it.";
@@ -100,22 +101,26 @@ export async function handleTurn(space: Space, message: Message, student: Studen
       return;
     }
 
-    // A text turn gets the real conversation plus tools and decides for itself.
-    // `saved` is state the model always needs, so it goes in the prompt rather
-    // than behind a tool call it might not make.
-    const [history, saved] = await Promise.all([
-      getRecentMessages(active.id),
-      describeSaved(active),
-    ]);
+    // Every retrieve/plan answer crosses the same deterministic boundary.
+    // Queries are identity-scoped in db.ts and filtered by student id again in
+    // assembly; only compact evidence reaches the answering model.
+    const context = assembleContext({
+      student: active,
+      question: text,
+      today: today(active.timezone),
+      rows: await getContextRows(active.id),
+    });
 
     const reply = await space.responding(() =>
       respond({
-        history,
+        history: context.messages.map(({ direction, content }) => ({ direction, content })),
         text,
-        saved,
+        context: renderContext(context),
         timezone: active.timezone,
         tools: TOOLS,
         runTool: (name, args) => runTool(active, name, args),
+        validateReply: (text) => validateReply(context, text),
+        fallbackReply: fallbackReply(context),
       }),
     );
 
@@ -129,6 +134,6 @@ export async function handleTurn(space: Space, message: Message, student: Studen
     // Through say(), so the failure is in the transcript. Sent bare, the next
     // turn's context has a gap where the apology was, and Sift answers "what
     // happened?" as though the turn never occurred.
-    await say(space, current?.id ?? null, TROUBLE).catch(() => {});
+    await sendRecovery((text) => say(space, current?.id ?? null, text));
   }
 }

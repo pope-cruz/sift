@@ -15,7 +15,10 @@
     "spike:send": "tsx src/spike/proactive-send.ts",
     "llm:check": "tsx src/spike/llm-check.ts",
     "live:run": "tsx src/spike/live-ingest.ts",
-    "live:snapshot": "tsx src/spike/live-snapshot.ts"
+    "live:snapshot": "tsx src/spike/live-snapshot.ts",
+    "phase3:preflight": "tsx src/spike/phase3-preflight.ts",
+    "phase3:live": "tsx src/spike/live-phase3.ts",
+    "phase3:audit": "tsx src/spike/phase3-audit.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

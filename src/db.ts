@@ -1,6 +1,12 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { env } from "./env.ts";
+import type {
+  ContextActionRow,
+  ContextItemRow,
+  ContextMessageRow,
+  ContextRows,
+} from "./planner.ts";
 
 export const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -20,6 +26,18 @@ export async function getStudentBySpaceId(spaceId: string): Promise<Student | nu
     .from("students")
     .select("id, name, phone, photon_space_id, timezone, profile")
     .eq("photon_space_id", spaceId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+/** Identity lookup for bounded validation scripts; never log the phone. */
+export async function getStudentByPhone(phone: string): Promise<Student | null> {
+  const { data, error } = await db
+    .from("students")
+    .select("id, name, phone, photon_space_id, timezone, profile")
+    .eq("phone", phone)
     .maybeSingle();
 
   if (error) throw error;
@@ -237,26 +255,47 @@ export async function recordAttachment(input: {
 }
 
 /**
- * The conversation, both directions, oldest first. Sift's own replies are
- * recorded by `say()` in turn.ts rather than from the provider's echo, so
- * ordering is deterministic and every turn sees what it actually said.
+ * One identity-scoped read boundary for retrieval and planning. The relatively
+ * generous row limits are reduced deterministically in planner.ts after
+ * relevance ranking; raw attachment bytes are never queried, and
+ * `extracted_text` is parsed only for compact place/topic fields.
  */
-export async function getRecentMessages(
+export async function getContextRows(
   studentId: string,
-  limit = 12,
-): Promise<{ direction: string; content: string }[]> {
-  const { data, error } = await db
-    .from("messages")
-    .select("direction, content, created_at")
-    .eq("student_id", studentId)
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  options?: { itemLimit?: number; actionLimit?: number; messageLimit?: number },
+): Promise<ContextRows> {
+  const [items, actions, messages] = await Promise.all([
+    db
+      .from("items")
+      .select("id, student_id, type, title, summary, category, extracted_text, created_at")
+      .eq("student_id", studentId)
+      .order("created_at", { ascending: false })
+      .limit(options?.itemLimit ?? 50),
+    db
+      .from("actions")
+      .select("id, student_id, item_id, description, due_date, status, created_at")
+      .eq("student_id", studentId)
+      .eq("status", "open")
+      .order("due_date", { ascending: true, nullsFirst: false })
+      .limit(options?.actionLimit ?? 100),
+    db
+      .from("messages")
+      .select("id, student_id, direction, content, created_at")
+      .eq("student_id", studentId)
+      .order("created_at", { ascending: false })
+      .limit(options?.messageLimit ?? 20),
+  ]);
 
-  if (error) throw error;
-  return data
-    .reverse()
-    .filter((row) => row.content)
-    .map((row) => ({ direction: row.direction ?? "inbound", content: row.content as string }));
+  if (items.error) throw items.error;
+  if (actions.error) throw actions.error;
+  if (messages.error) throw messages.error;
+
+  return {
+    items: items.data as ContextItemRow[],
+    actions: actions.data as ContextActionRow[],
+    // The query is newest-first; assembly expects conversation order.
+    messages: [...(messages.data as ContextMessageRow[])].reverse(),
+  };
 }
 
 /**
