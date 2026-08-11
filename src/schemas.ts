@@ -116,6 +116,14 @@ export const DateCandidate = z.object({
       "ISO yyyy-mm-dd, or null when the year or day genuinely cannot be resolved. " +
         "Null is the correct answer for an ambiguous date — never guess to fill this in.",
     ),
+  normalized_time: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+    .nullable()
+    .describe(
+      "24-hour HH:mm only when the source states an exact due/event time; otherwise null. " +
+        "Never infer a typical time.",
+    ),
   role: DateRole,
   source: EvidenceSource,
   evidence_excerpt: z

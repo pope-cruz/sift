@@ -3,12 +3,14 @@ import { imessage } from "spectrum-ts/providers/imessage";
 
 import { env } from "./env.ts";
 import { runLoop } from "./loop.ts";
+import { startReminderWorker } from "./reminder-runtime.ts";
 
 const app = await Spectrum({
   projectId: env.PROJECT_ID,
   projectSecret: env.PROJECT_SECRET,
   providers: [imessage.config()],
 });
+const reminders = startReminderWorker(app);
 
 // Spectrum registers its own SIGINT/SIGTERM handlers and calls stop() with a
 // 3s timeout, so shutdown needs no wiring here. stop() is idempotent; this
@@ -16,5 +18,6 @@ const app = await Spectrum({
 try {
   await runLoop(app);
 } finally {
+  reminders.stop();
   await app.stop();
 }

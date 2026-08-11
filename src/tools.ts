@@ -9,14 +9,16 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 import {
+  cancelActionReminder,
   getItemEvidence,
   insertActions,
   insertItem,
   listSavedItems,
+  rescheduleActionReminder,
   rescheduleActions,
   type Student,
 } from "./db.ts";
-import { remindAtFor, today } from "./dates.ts";
+import { isIsoDate, localInstant, remindAtFor, today } from "./dates.ts";
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -94,12 +96,44 @@ export const TOOLS: Anthropic.Tool[] = [
             properties: {
               description: { type: "string" },
               due_date: { type: "string", description: "ISO yyyy-mm-dd, or omit if undated" },
+              due_time: {
+                type: "string",
+                description: "24-hour HH:mm only when the student gave an exact time; otherwise omit",
+              },
             },
             required: ["description"],
           },
         },
       },
       required: ["title", "summary"],
+    },
+  },
+  {
+    name: "reschedule_reminder",
+    description:
+      "Move one pending reminder to a different local calendar day. Use for requests like " +
+      '"remind me tomorrow instead". Resolve the action from SAVED and pass the requested ' +
+      "date as ISO yyyy-mm-dd. This changes the reminder only, not the deadline.",
+    input_schema: {
+      type: "object",
+      properties: {
+        action_id: { type: "string", description: "the action_id from an open date in SAVED" },
+        send_date: { type: "string", description: "requested local date, ISO yyyy-mm-dd" },
+      },
+      required: ["action_id", "send_date"],
+    },
+  },
+  {
+    name: "cancel_reminder",
+    description:
+      "Cancel one pending reminder without deleting or completing its saved action. Use when " +
+      'the student says "cancel that reminder" or "don\'t remind me about it" and means one action.',
+    input_schema: {
+      type: "object",
+      properties: {
+        action_id: { type: "string", description: "the action_id from an open date in SAVED" },
+      },
+      required: ["action_id"],
     },
   },
 ];
@@ -117,17 +151,37 @@ function badId(given: string, items: { id: string; title: string | null }[]): st
   );
 }
 
+function badActionId(
+  given: string,
+  items: { title: string | null; actions: { id: string; description: string }[] }[],
+): string {
+  const valid = items.flatMap((item) =>
+    item.actions.map((action) => `${action.id} (${item.title ?? action.description})`),
+  );
+  return (
+    `FAILED — nothing was changed. "${given}" is not a valid action_id. ` +
+    `Valid action ids: ${valid.join("; ")}. Retry with one of these.`
+  );
+}
+
 /**
  * A past date is never a live deadline, whichever path set it. Keeping this in
  * one place is what stops Phase 4's cron from firing a backlog of reminders for
  * work that is already over.
  */
-function scheduleFor(dueDate: string | null, student: Student, wanted: boolean) {
+function scheduleFor(
+  dueDate: string | null,
+  student: Student,
+  wanted: boolean,
+  dueTime: string | null = null,
+) {
   const stale = dueDate !== null && dueDate < today(student.timezone);
   const tracked = wanted && !stale;
   return {
     status: tracked ? ("open" as const) : ("reference" as const),
-    remindAt: tracked && dueDate ? remindAtFor(dueDate, student.timezone) : null,
+    remindAt: tracked && dueDate
+      ? remindAtFor(dueDate, student.timezone, new Date(), dueTime)
+      : null,
   };
 }
 
@@ -211,7 +265,11 @@ export async function runTool(
 
       const moved = dated.map((action) => {
         const dueDate = `${String(year).padStart(4, "0")}${action.due_date.slice(4)}`;
-        return { id: action.id, dueDate, ...scheduleFor(dueDate, student, true) };
+        return {
+          id: action.id,
+          dueDate,
+          ...scheduleFor(dueDate, student, true, action.due_time),
+        };
       });
 
       await rescheduleActions(student.id, moved);
@@ -246,12 +304,12 @@ export async function runTool(
         dated.map((action) => ({
           id: action.id,
           dueDate: action.due_date,
-          ...scheduleFor(action.due_date, student, wanted),
+          ...scheduleFor(action.due_date, student, wanted, action.due_time),
         })),
       );
 
       const tracked = dated.filter(
-        (action) => scheduleFor(action.due_date, student, wanted).status === "open",
+        (action) => scheduleFor(action.due_date, student, wanted, action.due_time).status === "open",
       ).length;
 
       return JSON.stringify({
@@ -280,7 +338,7 @@ export async function runTool(
 
     case "save_note": {
       const deadlines = Array.isArray(input.deadlines)
-        ? (input.deadlines as { description?: string; due_date?: string }[])
+        ? (input.deadlines as { description?: string; due_date?: string; due_time?: string }[])
         : [];
 
       const itemId = await insertItem({
@@ -288,6 +346,7 @@ export async function runTool(
         type: "note",
         title: String(input.title ?? "Note"),
         summary: String(input.summary ?? ""),
+        extractedText: JSON.stringify({ text_note_deadlines: deadlines }),
         category: "note",
       });
 
@@ -301,12 +360,55 @@ export async function runTool(
             return {
               description: entry.description as string,
               dueDate,
-              ...scheduleFor(dueDate, student, true),
+              ...scheduleFor(dueDate, student, true, entry.due_time ?? null),
             };
           }),
       );
 
       return JSON.stringify({ saved: true, item_id: itemId, deadlines: deadlines.length });
+    }
+
+    case "reschedule_reminder": {
+      const actionId = String(input.action_id ?? "");
+      const sendDate = String(input.send_date ?? "");
+      if (!isIsoDate(sendDate)) return "FAILED — send_date must be a real ISO calendar date.";
+
+      const items = await listSavedItems(student.id);
+      const action = items.flatMap((item) => item.actions).find((row) => row.id === actionId);
+      if (!action) return badActionId(actionId, items);
+      if (!action.due_date) return "FAILED — that action has no deadline, so it has no reminder.";
+
+      const planned = localInstant(sendDate, "18:00", student.timezone);
+      const due = localInstant(action.due_date, action.due_time ?? "20:00", student.timezone);
+      const now = new Date();
+      if (!planned || !due || planned.getTime() <= now.getTime()) {
+        return "FAILED — that reminder time is not in the future.";
+      }
+      if (planned.getTime() >= due.getTime()) {
+        return "FAILED — that would be after the deadline, so the reminder was not changed.";
+      }
+
+      const changed = await rescheduleActionReminder({
+        studentId: student.id,
+        actionId,
+        plannedSendAt: planned.toISOString(),
+      });
+      return changed
+        ? JSON.stringify({ rescheduled: true, send_date: sendDate, local_time: "18:00" })
+        : "FAILED — there is no pending reminder for that action; it may be cancelled, delivered, or already sending.";
+    }
+
+    case "cancel_reminder": {
+      const actionId = String(input.action_id ?? "");
+      const items = await listSavedItems(student.id);
+      if (!items.flatMap((item) => item.actions).some((row) => row.id === actionId)) {
+        return badActionId(actionId, items);
+      }
+
+      const cancelled = await cancelActionReminder(student.id, actionId);
+      return cancelled
+        ? JSON.stringify({ cancelled: true })
+        : "FAILED — there is no pending reminder for that action; it may already be cancelled, delivered, or sending.";
     }
 
     default:

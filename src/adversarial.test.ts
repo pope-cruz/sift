@@ -45,6 +45,7 @@ function date(overrides: Partial<DateCandidate> = {}): DateCandidate {
     label: "Project due",
     original_text: "September 18, 2026",
     normalized_date: "2026-09-18",
+    normalized_time: null,
     role: "deadline",
     source: "document_body",
     evidence_excerpt: "Project due September 18, 2026",

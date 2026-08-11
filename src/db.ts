@@ -1,12 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 
 import { env } from "./env.ts";
+import { localInstant } from "./dates.ts";
 import type {
   ContextActionRow,
   ContextItemRow,
   ContextMessageRow,
   ContextRows,
 } from "./planner.ts";
+import { REMINDER_CLAIMED_STATUS, type ReminderClaim } from "./reminders.ts";
+import { storedDueTime } from "./stored-deadlines.ts";
 
 export const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -38,6 +41,17 @@ export async function getStudentByPhone(phone: string): Promise<Student | null> 
     .from("students")
     .select("id, name, phone, photon_space_id, timezone, profile")
     .eq("phone", phone)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+export async function getStudentById(studentId: string): Promise<Student | null> {
+  const { data, error } = await db
+    .from("students")
+    .select("id, name, phone, photon_space_id, timezone, profile")
+    .eq("id", studentId)
     .maybeSingle();
 
   if (error) throw error;
@@ -197,7 +211,13 @@ export async function rescheduleActions(
   for (const row of rows) {
     const { error } = await db
       .from("actions")
-      .update({ status: row.status, due_date: row.dueDate, remind_at: row.remindAt })
+      .update({
+        status: row.status,
+        due_date: row.dueDate,
+        remind_at: row.remindAt,
+        // A moved/re-enabled deadline is a new pending delivery decision.
+        reminder_sent: false,
+      })
       .eq("id", row.id)
       .eq("student_id", studentId);
 
@@ -328,14 +348,20 @@ export type SavedItem = {
   type: string | null;
   title: string | null;
   summary: string | null;
-  actions: { id: string; description: string; due_date: string | null; status: string }[];
+  actions: {
+    id: string;
+    description: string;
+    due_date: string | null;
+    due_time: string | null;
+    status: string;
+  }[];
 };
 
 /** Everything this student has saved, newest first, with dates attached. */
 export async function listSavedItems(studentId: string, limit = 20): Promise<SavedItem[]> {
   const { data, error } = await db
     .from("items")
-    .select("id, type, title, summary")
+    .select("id, type, title, summary, extracted_text")
     .eq("student_id", studentId)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -356,9 +382,221 @@ export async function listSavedItems(studentId: string, limit = 20): Promise<Sav
   if (actions.error) throw actions.error;
 
   return data.map((item) => ({
-    ...item,
+    id: item.id,
+    type: item.type,
+    title: item.title,
+    summary: item.summary,
     actions: actions.data
       .filter((action) => action.item_id === item.id)
-      .map(({ item_id: _ignored, ...action }) => action),
+      .map(({ item_id: _ignored, ...action }) => ({
+        ...action,
+        due_time: action.due_date
+          ? storedDueTime(item.extracted_text, action.description, action.due_date)
+          : null,
+      })),
   }));
+}
+
+type ReminderActionRow = {
+  id: string;
+  student_id: string;
+  item_id: string | null;
+  description: string | null;
+  due_date: string | null;
+  remind_at: string | null;
+};
+
+/**
+ * Claim due reminders with one conditional UPDATE per candidate. PostgreSQL
+ * rechecks the status/remind_at predicate after a concurrent updater releases
+ * its row lock, so only one worker receives each action. `reminder_sent` stays
+ * false until the provider callback succeeds; the temporary action status is
+ * the claim token.
+ */
+export async function claimDueReminders(now: Date, limit: number): Promise<ReminderClaim[]> {
+  const candidates = await db
+    .from("actions")
+    .select("id, student_id, item_id, description, due_date, remind_at")
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .not("remind_at", "is", null)
+    .not("due_date", "is", null)
+    .lte("remind_at", now.toISOString())
+    .order("remind_at", { ascending: true })
+    .limit(Math.max(limit * 2, limit));
+  if (candidates.error) throw candidates.error;
+
+  const claimed: ReminderActionRow[] = [];
+  for (const candidate of candidates.data as ReminderActionRow[]) {
+    if (claimed.length >= limit) break;
+    const result = await db
+      .from("actions")
+      .update({ status: REMINDER_CLAIMED_STATUS })
+      .eq("id", candidate.id)
+      .eq("student_id", candidate.student_id)
+      .eq("status", "open")
+      .eq("reminder_sent", false)
+      .eq("remind_at", candidate.remind_at)
+      .select("id, student_id, item_id, description, due_date, remind_at")
+      .maybeSingle();
+    if (result.error) throw result.error;
+    if (result.data) claimed.push(result.data as ReminderActionRow);
+  }
+
+  const hydrated: ReminderClaim[] = [];
+  for (const action of claimed) {
+    const [student, item] = await Promise.all([
+      getStudentById(action.student_id),
+      action.item_id
+        ? db
+            .from("items")
+            .select("title, summary, extracted_text")
+            .eq("id", action.item_id)
+            .eq("student_id", action.student_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+
+    if (item.error) throw item.error;
+    const dueTime = action.due_date && action.description
+      ? storedDueTime(item.data?.extracted_text, action.description, action.due_date)
+      : null;
+    const due = action.due_date && student
+      ? localInstant(action.due_date, dueTime ?? "20:00", student.timezone)
+      : null;
+    if (
+      !student?.photon_space_id ||
+      !action.description ||
+      !action.due_date ||
+      !action.remind_at ||
+      !due ||
+      due.getTime() <= now.getTime()
+    ) {
+      // A reminder with no destination or grounded deadline cannot be sent.
+      // Cancel the reminder without deleting the underlying saved action.
+      const { error } = await db
+        .from("actions")
+        .update({
+          status: due && due.getTime() <= now.getTime() ? "reference" : "open",
+          remind_at: null,
+        })
+        .eq("id", action.id)
+        .eq("status", REMINDER_CLAIMED_STATUS);
+      if (error) throw error;
+      continue;
+    }
+
+    hydrated.push({
+      actionId: action.id,
+      studentId: action.student_id,
+      itemId: action.item_id,
+      spaceId: student.photon_space_id,
+      timezone: student.timezone,
+      description: action.description,
+      dueDate: action.due_date,
+      dueTime,
+      plannedSendAt: action.remind_at,
+      itemTitle: item.data?.title ?? null,
+      itemSummary: item.data?.summary ?? null,
+    });
+  }
+
+  return hydrated;
+}
+
+export async function markReminderDelivered(claim: ReminderClaim): Promise<void> {
+  const { data, error } = await db
+    .from("actions")
+    .update({ status: "open", reminder_sent: true })
+    .eq("id", claim.actionId)
+    .eq("student_id", claim.studentId)
+    .eq("status", REMINDER_CLAIMED_STATUS)
+    .eq("reminder_sent", false)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Reminder claim was no longer owned at delivery completion.");
+}
+
+export async function releaseReminderForRetry(
+  claim: ReminderClaim,
+  retryAt: Date,
+): Promise<void> {
+  const { data, error } = await db
+    .from("actions")
+    .update({ status: "open", remind_at: retryAt.toISOString() })
+    .eq("id", claim.actionId)
+    .eq("student_id", claim.studentId)
+    .eq("status", REMINDER_CLAIMED_STATUS)
+    .eq("reminder_sent", false)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Reminder claim was no longer owned when retry was scheduled.");
+}
+
+export async function cancelActionReminder(studentId: string, actionId: string): Promise<boolean> {
+  const { data, error } = await db
+    .from("actions")
+    .update({ remind_at: null })
+    .eq("id", actionId)
+    .eq("student_id", studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .not("remind_at", "is", null)
+    .select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) === 1;
+}
+
+export async function rescheduleActionReminder(input: {
+  studentId: string;
+  actionId: string;
+  plannedSendAt: string;
+}): Promise<boolean> {
+  const { data, error } = await db
+    .from("actions")
+    .update({ remind_at: input.plannedSendAt })
+    .eq("id", input.actionId)
+    .eq("student_id", input.studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .select("id");
+  if (error) throw error;
+  return (data?.length ?? 0) === 1;
+}
+
+/** Move exactly one pending reminder to now for the bounded acceptance path. */
+export async function forceNextReminderNow(
+  studentId: string,
+  now: Date,
+  actionId?: string,
+): Promise<string | null> {
+  let query = db
+    .from("actions")
+    .select("id")
+    .eq("student_id", studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .not("remind_at", "is", null)
+    .not("due_date", "is", null)
+    .order("remind_at", { ascending: true })
+    .limit(1);
+  if (actionId) query = query.eq("id", actionId);
+
+  const pending = await query.maybeSingle();
+  if (pending.error) throw pending.error;
+  if (!pending.data) return null;
+
+  const updated = await db
+    .from("actions")
+    .update({ remind_at: now.toISOString() })
+    .eq("id", pending.data.id)
+    .eq("student_id", studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .select("id")
+    .maybeSingle();
+  if (updated.error) throw updated.error;
+  return updated.data?.id ?? null;
 }

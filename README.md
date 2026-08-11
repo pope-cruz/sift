@@ -27,3 +27,7 @@ npm run start
 ## Phase 3 validation
 
 See [PHASE3.md](./PHASE3.md) for the retrieve/plan architecture, verification commands, bounded live demo, and current limitations.
+
+## Phase 4 validation
+
+See [PHASE4.md](./PHASE4.md) for the proactive reminder loop, deterministic timing rules, real `remind:now` path, and live acceptance evidence.

@@ -18,7 +18,10 @@
     "live:snapshot": "tsx src/spike/live-snapshot.ts",
     "phase3:preflight": "tsx src/spike/phase3-preflight.ts",
     "phase3:live": "tsx src/spike/live-phase3.ts",
-    "phase3:audit": "tsx src/spike/phase3-audit.ts"
+    "phase3:audit": "tsx src/spike/phase3-audit.ts",
+    "phase4:audit": "tsx src/spike/phase4-audit.ts",
+    "phase4:controls": "tsx src/spike/phase4-control-check.ts",
+    "remind:now": "tsx src/remind-now.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

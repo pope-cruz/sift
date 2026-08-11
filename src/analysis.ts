@@ -208,7 +208,7 @@ function describe(candidate: DateCandidate): string {
 function dedupe(decisions: Decision[]): Decision[] {
   const seen = new Set<string>();
   return decisions.filter((decision) => {
-    const key = `${decision.candidate.normalized_date}|${describe(decision.candidate).toLowerCase()}`;
+    const key = `${decision.candidate.normalized_date}|${decision.candidate.normalized_time ?? ""}|${describe(decision.candidate).toLowerCase()}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -230,7 +230,9 @@ function reconcileDateConflicts(decisions: Decision[]): Decision[] {
 
   const replacements = new Map<Decision, Decision>();
   for (const group of bySubject.values()) {
-    const dates = new Set(group.map((decision) => decision.candidate.normalized_date));
+    const dates = new Set(group.map((decision) =>
+      `${decision.candidate.normalized_date}T${decision.candidate.normalized_time ?? "unspecified"}`,
+    ));
     if (dates.size < 2) continue;
 
     const strongest = Math.max(
@@ -239,7 +241,9 @@ function reconcileDateConflicts(decisions: Decision[]): Decision[] {
     const leading = group.filter(
       (decision) => evidenceStrength(decision.candidate.source) === strongest,
     );
-    const leadingDates = new Set(leading.map((decision) => decision.candidate.normalized_date));
+    const leadingDates = new Set(leading.map((decision) =>
+      `${decision.candidate.normalized_date}T${decision.candidate.normalized_time ?? "unspecified"}`,
+    ));
 
     for (const decision of group) {
       const isLeading = leading.includes(decision);
@@ -293,7 +297,12 @@ export function aggregate(
       description: describe(decision.candidate),
       dueDate: decision.candidate.normalized_date,
       remindAt: decision.candidate.normalized_date
-        ? remindAtFor(decision.candidate.normalized_date, context.timezone)
+        ? remindAtFor(
+            decision.candidate.normalized_date,
+            context.timezone,
+            new Date(),
+            decision.candidate.normalized_time,
+          )
         : null,
       status: "open" as const,
     })),

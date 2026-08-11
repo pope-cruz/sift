@@ -310,6 +310,8 @@ Dates — the part that matters most:
 - normalized_date must be null whenever you cannot resolve it safely. A month and day with
   no year context is null — not a guess at the nearest year. Null is a correct, expected
   answer and costs nothing.
+- normalized_time is exact 24-hour HH:mm only when the source states a time. If it says
+  "11:59 PM", return "23:59". If it states no time, return null; never invent one.
 - evidence_excerpt must be text that genuinely appears in the caption, body, image, or
   filename. Never compose a quote. If you cannot quote it, you cannot report it.
 - source says where you saw it. Use filename only for dates read off the file name itself.
