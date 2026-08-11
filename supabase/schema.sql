@@ -70,6 +70,13 @@ alter table actions enable row level security;
 alter table attachments enable row level security;
 alter table messages enable row level security;
 
+-- The worker connects as service_role, which bypasses RLS but still needs table
+-- privileges. Supabase's default privileges did not cover tables created here,
+-- so grant explicitly. Deliberately NOT granted to anon/authenticated — nothing
+-- outside the worker touches these tables.
+grant usage on schema public to service_role;
+grant all privileges on table students, items, actions, attachments, messages to service_role;
+
 -- Private bucket for syllabi and screenshots.
 insert into storage.buckets (id, name, public)
 values ('attachments', 'attachments', false)

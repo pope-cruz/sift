@@ -9,6 +9,9 @@ const IGNORED = new Set(["read", "typing", "reaction", "unsend", "edit"]);
 
 export async function runLoop(app: SpectrumInstance) {
   for await (const [space, message] of app.messages) {
+    // Kept as a guard, though this line does not echo sends back into the
+    // stream — outbound rows are written at send time instead (see say() in
+    // turn.ts).
     if (message.direction === "outbound") continue;
     if (IGNORED.has(message.content.type)) continue;
 

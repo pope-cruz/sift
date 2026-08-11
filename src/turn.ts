@@ -1,6 +1,14 @@
+import { randomUUID } from "node:crypto";
+
 import type { Content, Message, Space } from "spectrum-ts";
 
-import { attachSpaceToStudent, getRecentMessages, recordMessage, type Student } from "./db.ts";
+import {
+  attachSpaceToStudent,
+  backfillMessageStudent,
+  getRecentMessages,
+  recordMessage,
+  type Student,
+} from "./db.ts";
 import { env } from "./env.ts";
 import { ingest } from "./ingest.ts";
 import { respond } from "./llm.ts";
@@ -44,25 +52,33 @@ export function summarize(contents: Content[]): string {
   return [text, files.length ? `[${files.join(", ")}]` : ""].filter(Boolean).join(" ").trim();
 }
 
-const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
-
 /**
- * Send and record in one step. Sift's own replies are half the conversation,
- * and without them every turn re-reads a one-sided transcript — which is what
- * made terse follow-ups like "make the 2025 into 2026" unreadable. The id is
- * ours rather than the provider's echo so ordering is deterministic; loop.ts
- * drops the echo when it arrives.
+ * Send and persist. This line does not echo outbound messages back into the
+ * stream, so a reply is only ever recorded here — and Phase 3's context needs
+ * both sides of the conversation to read coherently.
+ *
+ * Persistence failures are logged, never thrown: the message has already gone
+ * out, and surfacing an error would make the caller apologize for a reply the
+ * student can see.
  */
-async function say(space: Space, student: Student | null, text: string, tag: string) {
-  await space.send(text);
-  if (!student) return;
-  await recordMessage({
-    studentId: student.id,
-    photonMessageId: `sift-out-${tag}`,
-    direction: "outbound",
-    content: text,
-  }).catch((error) => console.error("failed to record reply", error));
+export async function say(space: Space, studentId: string | null, text: string) {
+  const sent = await space.send(text);
+
+  try {
+    await recordMessage({
+      studentId,
+      // Providers may not hand back the outbound message; a synthetic id still
+      // satisfies the UNIQUE column and keeps the transcript complete.
+      photonMessageId: sent?.id ?? `local-${randomUUID()}`,
+      direction: "outbound",
+      content: text,
+    });
+  } catch (error) {
+    console.error("failed to persist outbound message", { spaceId: space.id, error });
+  }
 }
+
+const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
 
 export async function handleTurn(space: Space, message: Message, student: Student | null) {
   const contents = parts(message);
@@ -70,46 +86,54 @@ export async function handleTurn(space: Space, message: Message, student: Studen
   const files = attachmentsOf(contents);
 
   try {
-    if (!student) {
-      if (isStart(text)) {
-        const bound = await attachSpaceToStudent(env.DEMO_PHONE, space.id);
-        // Text-only, no links — first-contact deliverability.
-        await say(space, bound, WELCOME, message.id);
+    let current = student;
+
+    if (!current) {
+      if (!isStart(text)) {
+        await say(space, null, "Text me “Start Sift” to get going.");
         return;
       }
-      await space.send("Text me \u201CStart Sift\u201D to get going.");
+
+      current = await attachSpaceToStudent(env.DEMO_PHONE, space.id);
+      await backfillMessageStudent(message.id, current.id);
+      await say(space, current.id, WELCOME); // Text-only, no links — first-contact deliverability.
       return;
     }
 
-    if (!text && files.length === 0) return; // Nothing actionable (voice, contact card, etc.).
-
     // Files take the direct path. A PDF is a syllabus and a screenshot is a
     // place — there is nothing to decide, and this is the demo's latency-
-    // critical beat, so it skips the model round trips entirely.
+    // critical beat, so it skips the conversational round trips entirely.
     if (files.length > 0) {
       // The literal pre-reply from the demo script, so the wait reads as work.
-      await say(space, student, "Sifting...", `${message.id}-ack`);
+      await say(space, current.id, "Sifting...");
       await space.responding(async () => {
-        await say(space, student, await ingest({ student, text, files }), message.id);
+        await say(space, current.id, await ingest({ student: current, text, files }));
       });
       return;
     }
 
+    if (!text) return; // Nothing actionable (voice, contact card, etc.).
+
+    // A text turn gets the real conversation plus tools and decides for itself.
+    // `saved` is state the model always needs, so it goes in the prompt rather
+    // than behind a tool call it might not make.
     const [history, saved] = await Promise.all([
-      getRecentMessages(student.id),
-      describeSaved(student),
+      getRecentMessages(current.id),
+      describeSaved(current),
     ]);
+
     const reply = await space.responding(() =>
       respond({
         history,
         text,
         saved,
-        timezone: student.timezone,
+        timezone: current.timezone,
         tools: TOOLS,
-        runTool: (name, args) => runTool(student, name, args),
+        runTool: (name, args) => runTool(current, name, args),
       }),
     );
-    await say(space, student, reply, message.id);
+
+    await say(space, current.id, reply);
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
     await space.send(TROUBLE).catch(() => {});

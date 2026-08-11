@@ -137,7 +137,11 @@ async function ingestSyllabus(
   // the extraction alone — so pay for them once, not back to back.
   const [extraction, storagePath] = await Promise.all([
     timed("extract syllabus", () =>
-      extractSyllabus({ pdf: bytes, caption, timezone: student.timezone }),
+      extractSyllabus(bytes, {
+        caption,
+        today: today(student.timezone),
+        timezone: student.timezone,
+      }),
     ),
     timed("upload", () =>
       uploadAttachmentBytes({
@@ -249,7 +253,7 @@ async function ingestPlace(student: Student, file: Attachment, caption: string):
 
   const [extraction, storagePath] = await Promise.all([
     timed("extract place", () =>
-      extractPlace({ image: shrunk.bytes, mimeType: shrunk.mimeType, caption }),
+      extractPlace(shrunk.bytes, { mimeType: shrunk.mimeType, caption }),
     ),
     // The full-resolution original goes to storage, not the shrunken copy.
     timed("upload", () =>

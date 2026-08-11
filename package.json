@@ -7,7 +7,8 @@
     "start": "tsx src/index.ts",
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/seed.ts",
-    "spike:send": "tsx src/spike/proactive-send.ts"
+    "spike:send": "tsx src/spike/proactive-send.ts",
+    "llm:check": "tsx src/spike/llm-check.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

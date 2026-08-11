@@ -55,6 +55,22 @@ export async function recordMessage(input: {
 }
 
 /**
+ * Onboarding writes its message row before the student is bound to the space,
+ * so that row lands with a null student_id. Attribute it after the fact —
+ * Phase 3 assembles context by student_id and would otherwise miss the first
+ * thing they ever said.
+ */
+export async function backfillMessageStudent(photonMessageId: string, studentId: string) {
+  const { error } = await db
+    .from("messages")
+    .update({ student_id: studentId })
+    .eq("photon_message_id", photonMessageId)
+    .is("student_id", null);
+
+  if (error) throw error;
+}
+
+/**
  * Bind the demo student to the space they texted from. The student row is
  * created by `npm run seed`; onboarding only attaches the space id.
  */

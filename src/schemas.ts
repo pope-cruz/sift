@@ -1,7 +1,5 @@
-// Single source of truth for every LLM output shape. Each schema is handed to
-// `zodOutputFormat()` so the model is constrained to it server-side, and the
-// SDK re-validates the reply — `parsed_output` is null when that fails, which
-// ingest treats as an extraction error rather than writing unvalidated data.
+// Single source of truth for every LLM output shape. Nothing gets written to
+// the database that hasn't come through one of these.
 import { z } from "zod";
 
 export const SyllabusExtraction = z.object({
@@ -10,7 +8,7 @@ export const SyllabusExtraction = z.object({
   events: z.array(
     z.object({
       name: z.string(),
-      date: z.string(), // ISO yyyy-mm-dd; the prompt tells the model to normalize.
+      date: z.string(), // ISO yyyy-mm-dd; the prompt passes today's date so the model can resolve the year
       kind: z.enum(["assignment", "exam", "project", "reading", "other"]),
     }),
   ),
