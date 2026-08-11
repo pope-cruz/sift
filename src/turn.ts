@@ -20,6 +20,9 @@ const WELCOME =
 
 const TROUBLE = "Hmm, I had trouble sifting that — mind sending it again?";
 
+const CANT_READ =
+  "I can't read that one yet — send me a PDF, a screenshot, or just type it and I'll keep track of it.";
+
 /**
  * A captioned attachment arrives as ONE message with `content.type === "group"`,
  * whose items hold the parts (attachment first, then text). Verified on the real
@@ -85,9 +88,11 @@ export async function handleTurn(space: Space, message: Message, student: Studen
   const text = textOf(contents);
   const files = attachmentsOf(contents);
 
-  try {
-    let current = student;
+  // Hoisted so the catch can attribute the failure reply to the student the
+  // turn was for, including the turn that just onboarded them.
+  let current = student;
 
+  try {
     if (!current) {
       if (!isStart(text)) {
         await say(space, null, "Text me “Start Sift” to get going.");
@@ -100,26 +105,34 @@ export async function handleTurn(space: Space, message: Message, student: Studen
       return;
     }
 
-    // Files take the direct path. A PDF is a syllabus and a screenshot is a
-    // place — there is nothing to decide, and this is the demo's latency-
-    // critical beat, so it skips the conversational round trips entirely.
+    // `current` is a mutable outer binding so the catch can see it, which
+    // means its narrowing doesn't survive into the closures below. Rebind.
+    const active = current;
+
+    // Files take the direct path — the turn's latency-critical beat. What the
+    // artifact IS gets decided inside ingest, not here.
     if (files.length > 0) {
       // The literal pre-reply from the demo script, so the wait reads as work.
-      await say(space, current.id, "Sifting...");
+      await say(space, active.id, "Sifting...");
       await space.responding(async () => {
-        await say(space, current.id, await ingest({ student: current, text, files }));
+        await say(space, active.id, await ingest({ student: active, text, files }));
       });
       return;
     }
 
-    if (!text) return; // Nothing actionable (voice, contact card, etc.).
+    // Voice notes, contact cards and the like. Silence reads as a dropped
+    // message, so say what happened rather than returning without a word.
+    if (!text) {
+      await say(space, active.id, CANT_READ);
+      return;
+    }
 
     // A text turn gets the real conversation plus tools and decides for itself.
     // `saved` is state the model always needs, so it goes in the prompt rather
     // than behind a tool call it might not make.
     const [history, saved] = await Promise.all([
-      getRecentMessages(current.id),
-      describeSaved(current),
+      getRecentMessages(active.id),
+      describeSaved(active),
     ]);
 
     const reply = await space.responding(() =>
@@ -127,15 +140,18 @@ export async function handleTurn(space: Space, message: Message, student: Studen
         history,
         text,
         saved,
-        timezone: current.timezone,
+        timezone: active.timezone,
         tools: TOOLS,
-        runTool: (name, args) => runTool(current, name, args),
+        runTool: (name, args) => runTool(active, name, args),
       }),
     );
 
-    await say(space, current.id, reply);
+    await say(space, active.id, reply);
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
-    await space.send(TROUBLE).catch(() => {});
+    // Through say(), so the failure is in the transcript. Sent bare, the next
+    // turn's context has a gap where the apology was, and Sift answers "what
+    // happened?" as though the turn never occurred.
+    await say(space, current?.id ?? null, TROUBLE).catch(() => {});
   }
 }
