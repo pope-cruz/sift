@@ -2,8 +2,17 @@ import { randomUUID } from "node:crypto";
 
 import type { Content, Message, Space } from "spectrum-ts";
 
-import { attachSpaceToStudent, backfillMessageStudent, recordMessage, type Student } from "./db.ts";
+import {
+  attachSpaceToStudent,
+  backfillMessageStudent,
+  getRecentMessages,
+  recordMessage,
+  type Student,
+} from "./db.ts";
 import { env } from "./env.ts";
+import { ingest } from "./ingest.ts";
+import { respond } from "./llm.ts";
+import { describeSaved, runTool, TOOLS } from "./tools.ts";
 
 const WELCOME =
   "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
@@ -91,24 +100,40 @@ export async function handleTurn(space: Space, message: Message, student: Studen
       return;
     }
 
-    // Ingest turns get the literal pre-reply from the demo script before the
-    // (Phase 2) extraction call, so the wait reads as work rather than silence.
+    // Files take the direct path. A PDF is a syllabus and a screenshot is a
+    // place — there is nothing to decide, and this is the demo's latency-
+    // critical beat, so it skips the conversational round trips entirely.
     if (files.length > 0) {
+      // The literal pre-reply from the demo script, so the wait reads as work.
       await say(space, current.id, "Sifting...");
       await space.responding(async () => {
-        // Phase 2 replaces this with classify → extract → rows.
-        const names = files.map((file) => file.name).join(", ");
-        await say(space, current.id, `Got ${names}. I can't read these yet — that lands next.`);
+        await say(space, current.id, await ingest({ student: current, text, files }));
       });
       return;
     }
 
     if (!text) return; // Nothing actionable (voice, contact card, etc.).
 
-    await space.responding(async () => {
-      // Phase 2 replaces this with the intent classifier.
-      await say(space, current.id, `echo: ${text}`);
-    });
+    // A text turn gets the real conversation plus tools and decides for itself.
+    // `saved` is state the model always needs, so it goes in the prompt rather
+    // than behind a tool call it might not make.
+    const [history, saved] = await Promise.all([
+      getRecentMessages(current.id),
+      describeSaved(current),
+    ]);
+
+    const reply = await space.responding(() =>
+      respond({
+        history,
+        text,
+        saved,
+        timezone: current.timezone,
+        tools: TOOLS,
+        runTool: (name, args) => runTool(current, name, args),
+      }),
+    );
+
+    await say(space, current.id, reply);
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
     await space.send(TROUBLE).catch(() => {});

@@ -1,5 +1,5 @@
-// Confirms ANTHROPIC_API_KEY works and structured outputs behave on
-// claude-haiku-4-5, before Phase 2 depends on either.
+// Confirms ANTHROPIC_API_KEY works and that structured outputs behave on the
+// extraction model, without needing the line or a database.
 //
 //   npm run llm:check
 //
@@ -8,13 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { extname } from "node:path";
 
-import { classify, extractPlace, extractSyllabus } from "../llm.ts";
-
-const intent = await classify({
-  text: "here's my syllabus for this semester",
-  attachments: [{ name: "syllabus.pdf", mimeType: "application/pdf" }],
-});
-console.log({ classify: intent });
+import { extractPlace, extractSyllabus } from "../llm.ts";
 
 const path = process.argv[2];
 

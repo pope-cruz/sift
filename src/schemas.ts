@@ -2,11 +2,6 @@
 // the database that hasn't come through one of these.
 import { z } from "zod";
 
-export const Intent = z.object({
-  intent: z.enum(["ingest", "retrieve", "plan", "clarify", "chitchat"]),
-});
-export type Intent = z.infer<typeof Intent>;
-
 export const SyllabusExtraction = z.object({
   title: z.string(), // e.g. "CS 4414: Operating Systems"
   topics: z.array(z.string()),

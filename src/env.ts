@@ -9,8 +9,7 @@ const schema = z.object({
   SUPABASE_URL: z.url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   DEMO_PHONE: z.string().min(1),
-  // Phases 2+; optional here so Phase 1 runs without it.
-  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1),
 });
 
 const parsed = schema.safeParse(process.env);
