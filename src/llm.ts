@@ -2,8 +2,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
+import { today } from "./dates.ts";
 import { env } from "./env.ts";
-import { PlaceExtraction, SyllabusExtraction } from "./schemas.ts";
+import { ArtifactAnalysis } from "./schemas.ts";
 
 // Two models, split by what the call actually needs.
 //
@@ -60,25 +61,27 @@ function asImageType(mimeType: string): ImageType {
   return match;
 }
 
-/** Today in the student's timezone, ISO yyyy-mm-dd. Dates in a syllabus are
- *  usually bare ("Oct 14"), so the model needs the current date to resolve a
- *  year — and "next Thursday" needs it too. */
-export function today(timezone: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-}
-
 const SIFT_SYSTEM = `You are Sift, a study assistant a student texts over iMessage. You
 remember their coursework, deadlines, and places they want to study, and you remind them
 when something is due.
 
+Reading what they send:
+- These are text messages. Typos, shorthand, and dropped words are normal — read for intent.
+  "keep ti as ref" is "keep it as reference". Never let a typo become a different subject than
+  the obvious one, and never build meaning out of a garbled word: if a fragment only makes
+  sense as an acronym or a product name, you have misread it.
+- If your own last message asked a question, what they send next is almost always the answer to
+  it. Resolve "it", "that", "those", and short replies against that question and against SAVED
+  before you treat the message as something new. Answering a question you asked is never a new
+  thing to remember.
+- When you genuinely cannot tell what they mean, ask. Do not guess and act.
+
 Replying:
+- Every message you send goes through the reply tool. A turn is not over until you have
+  called it — work you did without a reply is invisible to the student.
 - Plain text only. iMessage renders no markdown, so never use headers, bullets, or asterisks.
 - Two to five sentences. You are a text message, not a document.
+- Talk to the student, not about them. Say "you", never "the student".
 - Everything the student has saved is listed under SAVED below, with its ids. That list is
   the truth about what you have — answer from it, not from what you remember saying. If it
   is empty, you have nothing saved, whatever the conversation implies.
@@ -94,6 +97,27 @@ Dates:
   a current one whose dates are wrong — do not guess.
 - When they tell you the right year, use update_dates. That is an instruction, not a guess.
 - Never invent a date the student did not give you.`;
+
+/**
+ * The reply is a tool call, not loose text. With `tool_choice: "any"` the
+ * model cannot end a turn in prose — which is how it used to "confirm" a
+ * change on the ~half of action turns where it never called the action tool.
+ * Prose can't be the terminal state, so that failure is structurally gone.
+ */
+const REPLY_TOOL: Anthropic.Tool = {
+  name: "reply",
+  description:
+    "Send your reply to the student. This is the only way to say anything, and every turn " +
+    "ends with exactly one reply. If you are also changing something, make that tool call " +
+    "first, wait for its result, and reply based on what it actually reported.",
+  input_schema: {
+    type: "object",
+    properties: {
+      text: { type: "string", description: "the message to send, following the reply rules" },
+    },
+    required: ["text"],
+  },
+};
 
 /**
  * One text turn. The model sees the real conversation and picks an action.
@@ -128,8 +152,8 @@ export async function respond(input: {
     messages.push({ role: "user", content: input.text });
   }
 
-  // Bounded so a confused model can't spin. Four is comfortably more than the
-  // deepest real path is one change then a reply.
+  // Bounded so a confused model can't spin. The deepest real path is one
+  // change then a reply — two iterations.
   for (let iteration = 0; iteration < 4; iteration++) {
     const response = await anthropic().messages.create({
       model: FAST,
@@ -137,20 +161,23 @@ export async function respond(input: {
       system:
         `${SIFT_SYSTEM}\n\nToday is ${today(input.timezone)} (${input.timezone}).` +
         `\n\nSAVED:\n${input.saved}`,
-      tools: input.tools,
+      tools: [...input.tools, REPLY_TOOL],
+      tool_choice: { type: "any" },
       messages,
     });
 
     const toolUses = response.content.filter(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
     );
+    if (toolUses.length === 0) break; // refusal / max_tokens — nothing usable
 
-    if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
-      const text = response.content
-        .filter((block): block is Anthropic.TextBlock => block.type === "text")
-        .map((block) => block.text)
-        .join(" ")
-        .trim();
+    const replies = toolUses.filter((use) => use.name === "reply");
+    const actions = toolUses.filter((use) => use.name !== "reply");
+
+    // A reply with no pending actions is the terminal state.
+    const reply = replies[0];
+    if (actions.length === 0 && reply) {
+      const text = String((reply.input as { text?: unknown }).text ?? "").trim();
       if (text) return text;
       break;
     }
@@ -158,7 +185,7 @@ export async function respond(input: {
     messages.push({ role: "assistant", content: response.content });
 
     const results: Anthropic.ToolResultBlockParam[] = [];
-    for (const use of toolUses) {
+    for (const use of actions) {
       let content: string;
       try {
         content = await input.runTool(use.name, (use.input ?? {}) as Record<string, unknown>);
@@ -170,92 +197,130 @@ export async function respond(input: {
       results.push({ type: "tool_result", tool_use_id: use.id, content });
     }
 
+    // A reply issued alongside an action was written before the action's
+    // result existed — the old claim-success-blind bug in miniature. Bounce it
+    // so the resend reflects what actually happened.
+    for (const use of replies) {
+      results.push({
+        type: "tool_result",
+        tool_use_id: use.id,
+        content:
+          "NOT SENT — you called reply in the same turn as another tool, before seeing its " +
+          "result. Review the results above and call reply again.",
+      });
+    }
+
     messages.push({ role: "user", content: results });
   }
 
   return "Hmm, I got tangled up on that one — mind saying it another way?";
 }
 
-const SYLLABUS_SYSTEM = `You read a course syllabus and pull out what a student needs to remember.
-Normalize every date to ISO yyyy-mm-dd. Syllabi often write dates bare ("Oct 14", "4/19"), so infer the year: use the term the document states if it states one, otherwise the year that puts the date in the term closest to today.
-Report every dated item you find, including ones already past — do not drop an event because its date has gone by.
-Include only dated, actionable items as events: assignments, labs, exams, projects, readings. Skip office hours, recurring lecture times, and textbook publication dates.`;
+/**
+ * The one reader call. Every attachment goes through this, whatever its type.
+ *
+ * The prompt's whole job is to keep the model *observing* rather than deciding:
+ * report every date with an honest role and honest provenance, and let
+ * analysis.ts rule on what becomes a deadline. That split is why "Sample
+ * Midterm 2018" no longer produces a 2018 exam — the model is free to notice
+ * the 2018, because noticing it is not the same as scheduling it.
+ */
+const READER_SYSTEM = `You are the reading stage of a study assistant. A student sent an
+attachment. Describe what it is and every date in it. You are NOT deciding what to remind
+them about — a later stage does that — so your job is accuracy about what the artifact
+actually says, not usefulness.
 
-export async function extractSyllabus(
-  pdf: Buffer,
-  context: { caption?: string; today: string; timezone: string },
-): Promise<SyllabusExtraction> {
+Classifying:
+- purpose is what the artifact IS, not what it might be used for. A sheet of old exam
+  questions is practice_material even though it is exam-shaped. A poster for a talk is an
+  event_flyer, not a place, even if it names a venue.
+- Anything titled or labelled sample, practice, past, mock, archived, previous, revision,
+  or solutions is practice_material or reference_material unless its own text sets a
+  current, dated obligation.
+- user_intent comes from the caption. With no caption, save_for_later or ambiguous is
+  usually the honest answer — do not read intent into a bare file.
+- place is non-null only when this is somewhere a student could physically go.
+
+Dates — the part that matters most:
+- Report EVERY date you can see, including ones in the title or filename. Do not filter.
+- role is why the date is there. A year in a title or filename is title_or_filename_year.
+  A date in "© 2019" or "Revised 3/2020" is publication_date. A date describing something
+  that already happened is historical_date. "Fall 2024" is academic_term. Only use deadline,
+  scheduled_event, or reminder_request when the text ties an actual obligation or occurrence
+  to that date.
+- explicit is true ONLY when words like due, submit by, deadline, exam on, meets on, or
+  remind me connect an obligation to the date. A date printed in a header, title, or
+  filename is never explicit, no matter how confident you are about what it means.
+- normalized_date must be null whenever you cannot resolve it safely. A month and day with
+  no year context is null — not a guess at the nearest year. Null is a correct, expected
+  answer and costs nothing.
+- evidence_excerpt must be text that genuinely appears in the caption, body, image, or
+  filename. Never compose a quote. If you cannot quote it, you cannot report it.
+- source says where you saw it. Use filename only for dates read off the file name itself.
+
+If the artifact contains no dates at all, return an empty date_candidates array. That is a
+normal, common outcome — an artifact with no dates is still worth saving.`;
+
+export type ReaderInput = {
+  bytes: Buffer;
+  /** Decides the content block only: document for PDFs, image for pictures. */
+  mimeType: string;
+  filename: string;
+  caption: string;
+  timezone: string;
+};
+
+/** The bytes, shaped for whichever block type this MIME needs. */
+function contentBlock(input: ReaderInput): Anthropic.ContentBlockParam {
+  if (input.mimeType === "application/pdf") {
+    return {
+      type: "document",
+      source: { type: "base64", media_type: "application/pdf", data: input.bytes.toString("base64") },
+    };
+  }
+  return {
+    type: "image",
+    source: {
+      type: "base64",
+      media_type: asImageType(input.mimeType),
+      data: input.bytes.toString("base64"),
+    },
+  };
+}
+
+export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnalysis> {
+  const now = today(input.timezone);
+
   const response = await anthropic().messages.parse({
     model: READER,
-    max_tokens: 8000, // thinking + extraction share this ceiling
-    system: SYLLABUS_SYSTEM,
+    max_tokens: 8000, // thinking + analysis share this ceiling
+    system: READER_SYSTEM,
     messages: [
       {
         role: "user",
         content: [
-          // The document block goes before the text block.
-          {
-            type: "document",
-            source: {
-              type: "base64",
-              media_type: "application/pdf",
-              data: pdf.toString("base64"),
-            },
-          },
+          // The document/image block goes before the text block.
+          contentBlock(input),
           {
             type: "text",
             text: [
-              `Today is ${context.today} (${context.timezone}).`,
-              context.caption && `The student said: "${context.caption}"`,
-              "Extract the course title, its topics, and every dated item.",
-            ]
-              .filter(Boolean)
-              .join(" "),
+              `Today is ${now} (${input.timezone}).`,
+              `The file is named "${input.filename}".`,
+              // Named as the weakest evidence right where the model reads it,
+              // so a date in the name doesn't get promoted by proximity.
+              `The filename is metadata, not a statement by the student — a date in it is`,
+              `evidence of naming, not of scheduling.`,
+              input.caption
+                ? `The student said: "${input.caption}"`
+                : `The student sent it with no caption.`,
+              `Describe this artifact and every date in it.`,
+            ].join(" "),
           },
         ],
       },
     ],
-    output_config: { effort: READER_EFFORT, format: zodOutputFormat(SyllabusExtraction) },
+    output_config: { effort: READER_EFFORT, format: zodOutputFormat(ArtifactAnalysis) },
   });
 
-  return parsedOrThrow(response, "extractSyllabus");
-}
-
-const PLACE_SYSTEM = `You look at a screenshot of a place a student wants to remember — usually a café or somewhere to study.
-Pull out its name, where it is if the image says, and a short caption in the student's own framing.
-Use null for location when the image doesn't show one; don't guess.`;
-
-export async function extractPlace(
-  image: Buffer,
-  context: { mimeType: string; caption?: string },
-): Promise<PlaceExtraction> {
-  const response = await anthropic().messages.parse({
-    model: READER,
-    max_tokens: 4000, // thinking + extraction share this ceiling
-    system: PLACE_SYSTEM,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: asImageType(context.mimeType),
-              data: image.toString("base64"),
-            },
-          },
-          {
-            type: "text",
-            text: context.caption
-              ? `The student said: "${context.caption}"`
-              : "Describe this place.",
-          },
-        ],
-      },
-    ],
-    output_config: { effort: READER_EFFORT, format: zodOutputFormat(PlaceExtraction) },
-  });
-
-  return parsedOrThrow(response, "extractPlace");
+  return parsedOrThrow(response, "analyzeArtifact");
 }

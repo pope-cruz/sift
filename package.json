@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
+    "test": "node --experimental-strip-types --test src/*.test.ts",
+    "typecheck": "tsc --noEmit",
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/seed.ts",
     "spike:send": "tsx src/spike/proactive-send.ts",

@@ -1,32 +1,73 @@
 // Confirms ANTHROPIC_API_KEY works and that structured outputs behave on the
-// extraction model, without needing the line or a database.
+// reader model, without needing the line or a database.
 //
 //   npm run llm:check
 //
-// Optionally pass a PDF or image path to exercise the document/image path too:
-//   npm run llm:check -- tmp/attachments/some-syllabus.pdf
+// Pass a PDF or image to run the real ingestion pipeline over it — the reader
+// call plus the deterministic ruling, printed side by side, with nothing
+// persisted. This is the fastest way to see why a given file did or didn't
+// produce a deadline:
+//
+//   npm run llm:check -- "tmp/attachments/Sample Midterm 2018.pdf"
+//   npm run llm:check -- tmp/attachments/cafe.png "remind me about this friday"
 import { readFile } from "node:fs/promises";
-import { extname } from "node:path";
+import { basename, extname } from "node:path";
 
-import { extractPlace, extractSyllabus } from "../llm.ts";
+import { aggregate } from "../analysis.ts";
+import { today } from "../dates.ts";
+import { analyzeArtifact } from "../llm.ts";
 
 const path = process.argv[2];
+const caption = process.argv[3] ?? "";
+const timezone = "America/New_York";
 
 if (!path) {
   console.log("no file given — skipping the document/image check");
 } else {
   const bytes = await readFile(path);
-  const today = new Date().toISOString().slice(0, 10);
+  const extension = extname(path).toLowerCase();
+  const mimeType =
+    extension === ".pdf"
+      ? "application/pdf"
+      : extension === ".png"
+        ? "image/png"
+        : extension === ".webp"
+          ? "image/webp"
+          : "image/jpeg";
 
-  if (extname(path).toLowerCase() === ".pdf") {
-    const extracted = await extractSyllabus(bytes, { today, timezone: "America/New_York" });
-    console.log({
-      title: extracted.title,
-      topics: extracted.topics.length,
-      events: extracted.events.slice(0, 5),
-    });
-  } else {
-    const mimeType = extname(path).toLowerCase() === ".png" ? "image/png" : "image/jpeg";
-    console.log({ place: await extractPlace(bytes, { mimeType }) });
+  const filename = basename(path);
+  const analysis = await analyzeArtifact({ bytes, mimeType, filename, caption, timezone });
+
+  console.log("\n=== analysis ===");
+  console.log({
+    title: analysis.title,
+    purpose: analysis.purpose,
+    secondary_tags: analysis.secondary_tags,
+    user_intent: analysis.user_intent,
+    place: analysis.place,
+    topics: analysis.topics.length,
+    candidates: analysis.date_candidates.length,
+  });
+
+  const result = aggregate(analysis, {
+    today: today(timezone),
+    timezone,
+    filename,
+    caption,
+  });
+
+  console.log("\n=== date rulings ===");
+  for (const decision of result.decisions) {
+    console.log(
+      `  ${decision.outcome.padEnd(13)} "${decision.candidate.original_text}" ` +
+        `(${decision.candidate.role} / ${decision.candidate.source}) — ${decision.reason}`,
+    );
   }
+  if (result.decisions.length === 0) console.log("  (no dates found)");
+
+  console.log("\n=== would persist ===");
+  console.log({ item: { ...result.item, extractedText: "[…]" }, actions: result.actions });
+
+  console.log("\n=== would reply ===");
+  console.log(result.confirmation);
 }

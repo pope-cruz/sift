@@ -113,6 +113,26 @@ export async function insertItem(input: {
   return data.id;
 }
 
+/**
+ * Undo a partially-written ingest. Supabase JS has no transactions, so when a
+ * write after insertItem fails, the compensating move is to remove the item
+ * and anything already hung off it. The FKs are `on delete set null`, not
+ * cascade — dependents are deleted explicitly so no orphan rows survive.
+ */
+export async function deleteItemCascade(studentId: string, itemId: string): Promise<void> {
+  for (const table of ["actions", "attachments"] as const) {
+    const { error } = await db
+      .from(table)
+      .delete()
+      .eq("item_id", itemId)
+      .eq("student_id", studentId);
+    if (error) throw error;
+  }
+
+  const { error } = await db.from("items").delete().eq("id", itemId).eq("student_id", studentId);
+  if (error) throw error;
+}
+
 export type ActionInput = {
   description: string;
   dueDate: string | null;
@@ -231,6 +251,31 @@ export async function getRecentMessages(
     .reverse()
     .filter((row) => row.content)
     .map((row) => ({ direction: row.direction ?? "inbound", content: row.content as string }));
+}
+
+/**
+ * The reasoning behind one saved item, as written at ingest.
+ *
+ * `extracted_text` already holds every date the reader saw and the ruling
+ * analysis.ts made on it — so "why isn't the final on my list?" is answerable
+ * from what we stored, not from the model's memory of saying something. It is
+ * read on demand rather than carried in every prompt because a dense syllabus
+ * is ~28 candidates, and most turns never ask.
+ */
+export async function getItemEvidence(
+  studentId: string,
+  itemId: string,
+): Promise<{ title: string | null; extractedText: string | null } | null> {
+  const { data, error } = await db
+    .from("items")
+    .select("title, extracted_text")
+    .eq("id", itemId)
+    .eq("student_id", studentId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return { title: data.title, extractedText: data.extracted_text };
 }
 
 export type SavedItem = {

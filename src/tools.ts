@@ -9,14 +9,14 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
 import {
+  getItemEvidence,
   insertActions,
   insertItem,
   listSavedItems,
   rescheduleActions,
   type Student,
 } from "./db.ts";
-import { today } from "./llm.ts";
-import { remindAtFor } from "./ingest.ts";
+import { remindAtFor, today } from "./dates.ts";
 
 /**
  * Everything the student has saved, rendered into the system prompt each turn.
@@ -66,7 +66,10 @@ export const TOOLS: Anthropic.Tool[] = [
     description:
       "Choose whether an item's dates are live deadlines Sift reminds about, or kept " +
       "for reference only. Use `tracked: false` when the student says it's an old file " +
-      "they just want remembered.",
+      "they just want remembered — \"keep it as reference\", \"just for ref\", \"that's " +
+      "last term's\", \"don't remind me about it\". This is the tool that answers your own " +
+      "question about whether a file is reference or current: a reply meaning reference is " +
+      "always this call on the item you asked about, never a new note.",
     input_schema: {
       type: "object",
       properties: {
@@ -77,18 +80,38 @@ export const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "why_saved",
+    description:
+      "Look up what a saved file actually said and how each date in it was ruled on. Use when " +
+      'the student questions what you did with something — "why isn\'t the final on there", ' +
+      '"where did that date come from", "did you miss the lab?". Read the result before you ' +
+      "answer; never explain a decision from memory.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item_id: { type: "string", description: "the id of the item from SAVED" },
+      },
+      required: ["item_id"],
+    },
+  },
+  {
     name: "save_note",
     description:
       "Remember something new the student told you in a message — a fact, a meeting, a " +
       "deadline that isn't already saved. Do not use this to record a change to " +
-      "something that already exists; use update_dates or set_tracking for that.",
+      "something that already exists; use update_dates or set_tracking for that. Do not " +
+      "use it to record an answer to a question you just asked: that answer is about an " +
+      "item already in SAVED, so it belongs in the tool that changes that item.",
     input_schema: {
       type: "object",
       properties: {
         title: { type: "string", description: "short label for the thing itself" },
         summary: {
           type: "string",
-          description: "the substance in a sentence or two, in the student's own terms",
+          description:
+            "the substance in a sentence or two, in the student's own words. Write the thing " +
+            'itself ("Chem midterm moved to the 14th"), not a description of who said it ' +
+            '("The student wants..."). This text gets read back to them.',
         },
         deadlines: {
           type: "array",
@@ -133,6 +156,64 @@ function scheduleFor(dueDate: string | null, student: Student, wanted: boolean) 
     status: tracked ? ("open" as const) : ("reference" as const),
     remindAt: tracked && dueDate ? remindAtFor(dueDate, student.timezone) : null,
   };
+}
+
+/** What each ruling meant, in words the model can repeat to the student. */
+const OUTCOMES: Record<string, string> = {
+  open: "tracked as a live deadline",
+  reference: "kept but not reminded about",
+  evidence_only: "not treated as a deadline",
+};
+
+type StoredCandidate = {
+  original_text?: string;
+  role?: string;
+  source?: string;
+  normalized_date?: string | null;
+  outcome?: string;
+  decision_reason?: string;
+};
+
+/**
+ * Turn the stored ingest record into something worth reading. The raw JSON
+ * would work, but it invites the model to quote field names at a student over
+ * iMessage; this states the same facts as sentences.
+ */
+function renderEvidence(title: string | null, extractedText: string): string {
+  let stored: { filename?: string; caption?: string; evaluated_at?: string; candidates?: unknown };
+  try {
+    stored = JSON.parse(extractedText);
+  } catch {
+    return "The reading notes for that one are unreadable, so say you can't check rather than guessing.";
+  }
+
+  const candidates = Array.isArray(stored.candidates)
+    ? (stored.candidates as StoredCandidate[])
+    : [];
+
+  const lines = [
+    `Reading notes for "${title ?? "untitled"}"${stored.filename ? ` (${stored.filename})` : ""}, read on ${stored.evaluated_at ?? "an unrecorded date"}.`,
+    stored.caption ? `The student sent it saying: "${stored.caption}"` : "It arrived with no caption.",
+    "",
+    candidates.length
+      ? `Every date found in it (${candidates.length}):`
+      : "No dates were found in it at all.",
+  ];
+
+  for (const candidate of candidates) {
+    const seen = candidate.original_text ?? "(unquoted)";
+    const where = candidate.source ? ` in the ${candidate.source}` : "";
+    const resolved = candidate.normalized_date ? `, read as ${candidate.normalized_date}` : "";
+    const ruling = OUTCOMES[candidate.outcome ?? ""] ?? candidate.outcome ?? "unruled";
+    lines.push(`- "${seen}"${where}${resolved} — ${ruling}. Why: ${candidate.decision_reason ?? "no reason recorded"}.`);
+  }
+
+  lines.push(
+    "",
+    "Answer from these notes only. If the student is right that something was missed, say so plainly instead of defending the call.",
+  );
+
+  return lines.join("\n");
 }
 
 export async function runTool(
@@ -208,6 +289,20 @@ export async function runTool(
             ? "Every date has already passed, so nothing can be tracked. Ask which year they should be."
             : undefined,
       });
+    }
+
+    case "why_saved": {
+      const itemId = String(input.item_id ?? "");
+
+      const items = await listSavedItems(student.id);
+      if (!items.some((candidate) => candidate.id === itemId)) return badId(itemId, items);
+
+      const evidence = await getItemEvidence(student.id, itemId);
+      if (!evidence?.extractedText) {
+        return "No reading notes were kept for that one — it was saved before, or without, a file.";
+      }
+
+      return renderEvidence(evidence.title, evidence.extractedText);
     }
 
     case "save_note": {
