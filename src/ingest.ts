@@ -3,23 +3,17 @@
 //
 // Scope is the locked demo per the plan: one syllabus PDF and one screenshot.
 // Generality is explicitly not the goal.
+import sharp from "sharp";
 import type { Attachment } from "spectrum-ts";
 
 import {
   insertActions,
   insertItem,
-  saveAttachment,
-  setPending,
-  type Pending,
+  recordAttachment,
+  uploadAttachmentBytes,
   type Student,
 } from "./db.ts";
-import {
-  classifyPendingAnswer,
-  extractNote,
-  extractPlace,
-  extractSyllabus,
-  today,
-} from "./llm.ts";
+import { extractPlace, extractSyllabus, today } from "./llm.ts";
 
 // What Claude vision accepts. iPhone photos arrive as image/heic, which it does
 // not — the demo's screenshot is a PNG, so we say so plainly instead of failing.
@@ -27,6 +21,30 @@ const VISION_MIME = new Set(["image/jpeg", "image/png", "image/gif", "image/webp
 
 const isPdf = (mimeType: string) => mimeType === "application/pdf";
 const isImage = (mimeType: string) => mimeType.startsWith("image/");
+
+/**
+ * Claude downsamples anything larger than 1568px on the long edge anyway, so a
+ * full-resolution phone screenshot spends seconds uploading pixels the model
+ * discards. Shrinking first cut the vision call from ~4.5s to ~2.6s on a
+ * 1290x2796 screenshot, at ~30ms of CPU. The original bytes still go to
+ * storage — this smaller copy exists only for the API call.
+ */
+async function forVision(
+  bytes: Buffer,
+  mimeType: string,
+): Promise<{ bytes: Buffer; mimeType: string }> {
+  try {
+    const resized = await sharp(bytes)
+      .resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 80 })
+      .toBuffer();
+    return { bytes: resized, mimeType: "image/jpeg" };
+  } catch {
+    // An image sharp can't decode may still be one Claude accepts. Send it as
+    // it came rather than failing the whole ingest over an optimisation.
+    return { bytes, mimeType };
+  }
+}
 
 /** Local time-zone offset, in ms, at a given instant. */
 function offsetMs(instant: Date, timezone: string): number {
@@ -93,17 +111,43 @@ function friendly(dueDate: string, timezone: string, options?: { year?: boolean 
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+/**
+ * Time each stage of an ingest to the log. The pipeline measures ~3s locally
+ * while a real turn has been reported at ~45s, and the gap is upstream of any
+ * code here — pulling the bytes from the provider. Guessing which stage is slow
+ * is how you optimise the wrong one, so every stage reports.
+ */
+async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const started = Date.now();
+  try {
+    return await fn();
+  } finally {
+    console.log(`[ingest] ${label} ${Date.now() - started}ms`);
+  }
+}
+
 async function ingestSyllabus(
   student: Student,
   file: Attachment,
   caption: string,
 ): Promise<string> {
-  const bytes = await file.read();
-  const extraction = await extractSyllabus({
-    pdf: bytes,
-    caption,
-    timezone: student.timezone,
-  });
+  const bytes = await timed(`read ${file.name}`, () => file.read());
+
+  // The upload needs nothing from the extraction, and the student is waiting on
+  // the extraction alone — so pay for them once, not back to back.
+  const [extraction, storagePath] = await Promise.all([
+    timed("extract syllabus", () =>
+      extractSyllabus({ pdf: bytes, caption, timezone: student.timezone }),
+    ),
+    timed("upload", () =>
+      uploadAttachmentBytes({
+      studentId: student.id,
+      filename: file.name,
+        mimeType: file.mimeType,
+        bytes,
+      }),
+    ),
+  ]);
 
   const itemId = await insertItem({
     studentId: student.id,
@@ -113,12 +157,12 @@ async function ingestSyllabus(
     category: "course",
   });
 
-  await saveAttachment({
+  await recordAttachment({
     studentId: student.id,
     itemId,
     filename: file.name,
     mimeType: file.mimeType,
-    bytes,
+    storagePath,
   });
 
   // A date that has already gone by is never a live deadline. It usually means
@@ -177,8 +221,6 @@ async function ingestSyllabus(
       `Got it — ${extraction.title}. ${pulled} They all land ${span}, which has already passed. ` +
       `Want me to keep this as reference only, or are those dates supposed to be current?`;
 
-    await setPending(student.id, { kind: "stale_syllabus", question, itemId });
-
     return question;
   }
 
@@ -202,12 +244,23 @@ async function ingestSyllabus(
 }
 
 async function ingestPlace(student: Student, file: Attachment, caption: string): Promise<string> {
-  const bytes = await file.read();
-  const extraction = await extractPlace({
-    image: bytes,
-    mimeType: file.mimeType,
-    caption,
-  });
+  const bytes = await timed(`read ${file.name}`, () => file.read());
+  const shrunk = await timed("downscale", () => forVision(bytes, file.mimeType));
+
+  const [extraction, storagePath] = await Promise.all([
+    timed("extract place", () =>
+      extractPlace({ image: shrunk.bytes, mimeType: shrunk.mimeType, caption }),
+    ),
+    // The full-resolution original goes to storage, not the shrunken copy.
+    timed("upload", () =>
+      uploadAttachmentBytes({
+        studentId: student.id,
+        filename: file.name,
+        mimeType: file.mimeType,
+        bytes,
+      }),
+    ),
+  ]);
 
   const itemId = await insertItem({
     studentId: student.id,
@@ -218,91 +271,23 @@ async function ingestPlace(student: Student, file: Attachment, caption: string):
     category: extraction.category,
   });
 
-  await saveAttachment({
+  await recordAttachment({
     studentId: student.id,
     itemId,
     filename: file.name,
     mimeType: file.mimeType,
-    bytes,
+    storagePath,
   });
 
   const where = extraction.location ? `${extraction.name} (${extraction.location})` : extraction.name;
   return `Saved ${where} as a study spot. ${extraction.caption} I'll bring it up when you're deciding where to work.`;
 }
 
-async function ingestNote(student: Student, text: string): Promise<string> {
-  const extraction = await extractNote({ text, timezone: student.timezone });
-
-  const itemId = await insertItem({
-    studentId: student.id,
-    type: "note",
-    title: extraction.title,
-    summary: extraction.summary,
-    extractedText: text,
-    category: "note",
-  });
-
-  // Same rule as a syllabus: a date that has gone by is remembered, not
-  // reminded on. A one-line note isn't worth a follow-up question, though.
-  const now = today(student.timezone);
-  const written = await insertActions(
-    student.id,
-    itemId,
-    extraction.actions.map((action) => {
-      const stale = action.due_date !== null && action.due_date < now;
-      return {
-        description: action.description,
-        dueDate: action.due_date,
-        remindAt:
-          action.due_date && !stale ? remindAtFor(action.due_date, student.timezone) : null,
-        status: stale ? ("reference" as const) : ("open" as const),
-      };
-    }),
-  );
-
-  if (written.length === 0) return `Noted — ${extraction.summary}`;
-
-  const soonest = extraction.actions
-    .map((action) => action.due_date)
-    .filter((date): date is string => date !== null && date >= now)
-    .sort()[0];
-
-  return soonest
-    ? `Noted — ${extraction.summary} I've got ${friendly(soonest, student.timezone)} down and I'll remind you.`
-    : `Noted — ${extraction.summary} I'll keep track of it.`;
-}
-
 /**
- * Answer to a question Sift asked last turn. Returns the reply, or null when
- * the student ignored the question — the caller then routes the turn normally,
- * so a pending question can never trap the conversation.
- */
-export async function resolvePending(input: {
-  student: Student;
-  pending: Pending;
-  text: string;
-}): Promise<string | null> {
-  const { student, pending, text } = input;
-
-  const answer = await classifyPendingAnswer({ question: pending.question, text });
-  await setPending(student.id, null);
-
-  switch (answer) {
-    case "reference":
-      return "Keeping it as reference — I'll remember what's in it, but I won't treat those dates as deadlines or remind you about them.";
-    case "current":
-      // Sift can't recover the right dates from a file whose dates are wrong,
-      // and guessing them is how a student ends up trusting a deadline nobody
-      // wrote down. Ask.
-      return "Then the dates in that file are off — I don't want to guess at them. Text me the ones that actually matter and I'll track those.";
-    case "unrelated":
-      return null; // They've moved on; the caller routes the turn normally.
-  }
-}
-
-/**
- * Route the turn's parts. Attachments win: a captioned file is one ingest, and
- * the caption is context for the extraction rather than a turn of its own.
+ * Route the turn's files. A captioned attachment is one ingest, and the caption
+ * is context for the extraction rather than a turn of its own. Text-only turns
+ * never reach here — those go to the tool-calling loop, which can save a note
+ * itself when that is genuinely what the message is.
  */
 export async function ingest(input: {
   student: Student;
@@ -310,8 +295,20 @@ export async function ingest(input: {
   files: Attachment[];
 }): Promise<string> {
   const { student, text, files } = input;
+  const started = Date.now();
+  try {
+    return await route(input);
+  } finally {
+    console.log(`[ingest] TOTAL ${Date.now() - started}ms`);
+  }
+}
 
-  if (files.length === 0) return ingestNote(student, text);
+async function route(input: {
+  student: Student;
+  text: string;
+  files: Attachment[];
+}): Promise<string> {
+  const { student, text, files } = input;
 
   const replies: string[] = [];
 

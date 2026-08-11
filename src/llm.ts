@@ -7,13 +7,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import { env } from "./env.ts";
-import {
-  Intent,
-  NoteExtraction,
-  PendingAnswer,
-  PlaceExtraction,
-  SyllabusExtraction,
-} from "./schemas.ts";
+import { PlaceExtraction, SyllabusExtraction } from "./schemas.ts";
 
 const MODEL = "claude-haiku-4-5";
 
@@ -39,69 +33,105 @@ export function today(timezone: string): string {
   }).format(new Date());
 }
 
-export async function classify(input: {
-  text: string;
-  files: { name: string; mimeType: string }[];
-}): Promise<Intent> {
-  const fileList = input.files.map((file) => `${file.name} (${file.mimeType})`).join(", ");
+const SIFT_SYSTEM = `You are Sift, a study assistant a student texts over iMessage. You
+remember their coursework, deadlines, and places they want to study, and you remind them
+when something is due.
 
-  const message = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 200,
-    system:
-      "You classify a single message a student sent to Sift, a study assistant.\n" +
-      "- ingest: they are giving you something to remember (a file, a link, a fact, a deadline).\n" +
-      "- retrieve: they are asking about something they already sent you.\n" +
-      "- plan: they want help organising their time or deciding what to work on.\n" +
-      "- clarify: the message is too vague to act on and needs a follow-up question.\n" +
-      "- chitchat: anything else — greetings, thanks, small talk.",
-    messages: [
-      {
-        role: "user",
-        content:
-          [input.text, fileList && `Attached files: ${fileList}`].filter(Boolean).join("\n") ||
-          "(empty message)",
-      },
-    ],
-    output_config: { format: zodOutputFormat(Intent) },
-  });
+Replying:
+- Plain text only. iMessage renders no markdown, so never use headers, bullets, or asterisks.
+- Two to five sentences. You are a text message, not a document.
+- Everything the student has saved is listed under SAVED below, with its ids. That list is
+  the truth about what you have — answer from it, not from what you remember saying. If it
+  is empty, you have nothing saved, whatever the conversation implies.
+- When they are just being friendly, be friendly back and stop there. Don't recap what you
+  have, and don't push them to act on something they didn't ask about.
+- Never tell the student something changed unless a tool call confirmed it. If a tool
+  reports a failure, say what went wrong instead of claiming success.
+- Don't end every message with a question. Ask when you genuinely need an answer.
 
-  // A classifier failure shouldn't kill the turn — chitchat is the harmless
-  // default (the audit's "none of the above" case).
-  return message.parsed_output?.intent ?? "chitchat";
-}
+Dates:
+- A date that has already passed is never a live deadline. If a student sends a file whose
+  dates have all passed, say so and ask whether it is an old file to keep for reference or
+  a current one whose dates are wrong — do not guess.
+- When they tell you the right year, use update_dates. That is an instruction, not a guess.
+- Never invent a date the student did not give you.`;
 
 /**
- * Read the student's reply to Sift's own question about a stale syllabus.
- * Separate from `classify` because the space of sensible answers is different:
- * here a bare "yeah" is meaningful, and it means the thing Sift just asked.
+ * One text turn. The model sees the real conversation and picks an action,
+ * instead of a classifier sorting the message into a fixed box first.
  */
-export async function classifyPendingAnswer(input: {
-  question: string;
+export async function respond(input: {
+  history: { direction: string; content: string }[];
   text: string;
-}): Promise<PendingAnswer> {
-  const message = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 200,
-    system:
-      "Sift asked the student a question and this is their reply. Decide which way they answered.\n" +
-      "- reference: keep the material but don't track the dates as live deadlines " +
-      "(the syllabus is old, from a past term, just for reference).\n" +
-      "- current: the dates are real and Sift should track them and send reminders.\n" +
-      "- unrelated: they ignored the question and said something else entirely.\n" +
-      "A bare yes/no answers whichever option Sift's question put first.",
-    messages: [
-      {
-        role: "user",
-        content: `Sift asked: "${input.question}"\n\nThe student replied: "${input.text}"`,
-      },
-    ],
-    output_config: { format: zodOutputFormat(PendingAnswer) },
-  });
+  saved: string;
+  timezone: string;
+  tools: Anthropic.Tool[];
+  runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
+}): Promise<string> {
+  const messages: Anthropic.MessageParam[] = [];
 
-  // Falling back to `unrelated` keeps the student out of a dead end when the
-  // classifier fails — the turn just routes normally instead.
-  return message.parsed_output?.answer ?? "unrelated";
+  for (const turn of input.history) {
+    const role = turn.direction === "outbound" ? "assistant" : "user";
+    // The API rejects two turns of the same role in a row on some paths, and
+    // merging reads more naturally to the model than interleaving blanks.
+    const last = messages[messages.length - 1];
+    if (last?.role === role && typeof last.content === "string") {
+      last.content = `${last.content}\n${turn.content}`;
+    } else {
+      messages.push({ role, content: turn.content });
+    }
+  }
+
+  if (messages[messages.length - 1]?.role !== "user") {
+    messages.push({ role: "user", content: input.text });
+  }
+
+  // Bounded so a confused model can't spin. Four is comfortably more than the
+  // deepest real path is one change then a reply.
+  for (let iteration = 0; iteration < 4; iteration++) {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 1500,
+      system:
+        `${SIFT_SYSTEM}\n\nToday is ${today(input.timezone)} (${input.timezone}).` +
+        `\n\nSAVED:\n${input.saved}`,
+      tools: input.tools,
+      messages,
+    });
+
+    const toolUses = response.content.filter(
+      (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
+    );
+
+    if (toolUses.length === 0 || response.stop_reason !== "tool_use") {
+      const text = response.content
+        .filter((block): block is Anthropic.TextBlock => block.type === "text")
+        .map((block) => block.text)
+        .join(" ")
+        .trim();
+      if (text) return text;
+      break;
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const use of toolUses) {
+      let content: string;
+      try {
+        content = await input.runTool(use.name, (use.input ?? {}) as Record<string, unknown>);
+      } catch (error) {
+        // Hand the failure back rather than throwing — the model can tell the
+        // student something useful instead of the turn dying.
+        content = `Error: ${error instanceof Error ? error.message : String(error)}`;
+      }
+      results.push({ type: "tool_result", tool_use_id: use.id, content });
+    }
+
+    messages.push({ role: "user", content: results });
+  }
+
+  return "Hmm, I got tangled up on that one — mind saying it another way?";
 }
 
 export async function extractSyllabus(input: {
@@ -195,24 +225,4 @@ export async function extractPlace(input: {
   return message.parsed_output;
 }
 
-export async function extractNote(input: {
-  text: string;
-  timezone: string;
-}): Promise<NoteExtraction> {
-  const message = await client.messages.parse({
-    model: MODEL,
-    max_tokens: 1000,
-    system:
-      "A student is telling Sift something to remember. Capture it.\n" +
-      `Today is ${today(input.timezone)} (${input.timezone}).\n` +
-      "`title` is a short label. `summary` restates the note in one or two sentences. " +
-      "Add an entry to `actions` only for something the student actually has to do; resolve " +
-      "relative dates like \"Thursday\" against today and write them as ISO yyyy-mm-dd, " +
-      "or use null when the note carries no date.",
-    messages: [{ role: "user", content: input.text }],
-    output_config: { format: zodOutputFormat(NoteExtraction) },
-  });
 
-  if (!message.parsed_output) throw new ExtractionError("that note");
-  return message.parsed_output;
-}

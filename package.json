@@ -14,6 +14,7 @@
     "@supabase/supabase-js": "^2.112.2",
     "dotenv": "^17.4.2",
     "node-cron": "^4.6.0",
+    "sharp": "^0.35.3",
     "spectrum-ts": "^12.7.0",
     "tsx": "^4",
     "zod": "^4.4.3"

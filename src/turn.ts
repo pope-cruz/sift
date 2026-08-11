@@ -1,10 +1,10 @@
 import type { Content, Message, Space } from "spectrum-ts";
 
-import { attachSpaceToStudent, pendingOf, type Student } from "./db.ts";
+import { attachSpaceToStudent, getRecentMessages, recordMessage, type Student } from "./db.ts";
 import { env } from "./env.ts";
-import { ingest, resolvePending } from "./ingest.ts";
-import { classify } from "./llm.ts";
-import type { Intent } from "./schemas.ts";
+import { ingest } from "./ingest.ts";
+import { respond } from "./llm.ts";
+import { describeSaved, runTool, TOOLS } from "./tools.ts";
 
 const WELCOME =
   "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
@@ -47,22 +47,21 @@ export function summarize(contents: Content[]): string {
 const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
 
 /**
- * Non-ingest intents. `retrieve` and `plan` are Phase 3 — they need the context
- * assembly (open actions, recent items, recent messages) that doesn't exist
- * yet, so they hold rather than guess.
+ * Send and record in one step. Sift's own replies are half the conversation,
+ * and without them every turn re-reads a one-sided transcript — which is what
+ * made terse follow-ups like "make the 2025 into 2026" unreadable. The id is
+ * ours rather than the provider's echo so ordering is deterministic; loop.ts
+ * drops the echo when it arrives.
  */
-function reply(intent: Exclude<Intent, "ingest">, text: string) {
-  switch (intent) {
-    case "retrieve":
-    case "plan":
-      return "I've got that saved — pulling it back out is what I'm learning next. Keep sending me things in the meantime.";
-    case "clarify":
-      return text
-        ? "I'm not sure what to do with that one — can you give me a bit more?"
-        : "Didn't quite catch that — what would you like me to remember?";
-    case "chitchat":
-      return "Hey! Send me a syllabus, a screenshot, or anything you want to remember and I'll keep track of it.";
-  }
+async function say(space: Space, student: Student | null, text: string, tag: string) {
+  await space.send(text);
+  if (!student) return;
+  await recordMessage({
+    studentId: student.id,
+    photonMessageId: `sift-out-${tag}`,
+    direction: "outbound",
+    content: text,
+  }).catch((error) => console.error("failed to record reply", error));
 }
 
 export async function handleTurn(space: Space, message: Message, student: Student | null) {
@@ -73,48 +72,44 @@ export async function handleTurn(space: Space, message: Message, student: Studen
   try {
     if (!student) {
       if (isStart(text)) {
-        await attachSpaceToStudent(env.DEMO_PHONE, space.id);
-        await space.send(WELCOME); // Text-only, no links — first-contact deliverability.
+        const bound = await attachSpaceToStudent(env.DEMO_PHONE, space.id);
+        // Text-only, no links — first-contact deliverability.
+        await say(space, bound, WELCOME, message.id);
         return;
       }
-      await space.send("Text me “Start Sift” to get going.");
+      await space.send("Text me \u201CStart Sift\u201D to get going.");
       return;
     }
 
     if (!text && files.length === 0) return; // Nothing actionable (voice, contact card, etc.).
 
-    // A question Sift asked last turn gets first refusal on a text-only reply.
-    // Sending a new file instead is itself an answer — they've moved on — so
-    // files skip this and the pending question is dropped by the next resolve.
-    const pending = files.length === 0 ? pendingOf(student) : null;
-    if (pending) {
-      const resolved = await space.responding(() =>
-        resolvePending({ student, pending, text }),
-      );
-      if (resolved) {
-        await space.send(resolved);
-        return;
-      }
-      // They ignored the question — fall through and route the turn normally.
-    }
-
-    // A turn carrying a file is unambiguously ingest, so skip the classifier
-    // call and its latency — the caption rides along as extraction context.
-    const intent = files.length > 0 ? "ingest" : await classify({ text, files });
-
-    if (intent === "ingest") {
-      // The literal pre-reply from the demo script, sent before the extraction
-      // call so the wait reads as work rather than silence.
-      await space.send("Sifting...");
+    // Files take the direct path. A PDF is a syllabus and a screenshot is a
+    // place — there is nothing to decide, and this is the demo's latency-
+    // critical beat, so it skips the model round trips entirely.
+    if (files.length > 0) {
+      // The literal pre-reply from the demo script, so the wait reads as work.
+      await say(space, student, "Sifting...", `${message.id}-ack`);
       await space.responding(async () => {
-        await space.send(await ingest({ student, text, files }));
+        await say(space, student, await ingest({ student, text, files }), message.id);
       });
       return;
     }
 
-    await space.responding(async () => {
-      await space.send(reply(intent, text));
-    });
+    const [history, saved] = await Promise.all([
+      getRecentMessages(student.id),
+      describeSaved(student),
+    ]);
+    const reply = await space.responding(() =>
+      respond({
+        history,
+        text,
+        saved,
+        timezone: student.timezone,
+        tools: TOOLS,
+        runTool: (name, args) => runTool(student, name, args),
+      }),
+    );
+    await say(space, student, reply, message.id);
   } catch (error) {
     console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
     await space.send(TROUBLE).catch(() => {});

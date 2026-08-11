@@ -132,66 +132,127 @@ export async function insertActions(
 }
 
 /**
- * A question Sift asked and is waiting on an answer to. Lives in the student's
- * existing `profile` jsonb — this is one open question per student, not a work
- * queue, so it needs no table of its own.
+ * Rewrite reference rows once the student has told Sift what the dates really
+ * are. Each row gets its own values, so this is a loop rather than one
+ * statement — a syllabus is a handful of rows, not a bulk job.
  */
-export type Pending = {
-  kind: "stale_syllabus";
-  question: string;
-  itemId: string;
-};
+export async function rescheduleActions(
+  studentId: string,
+  rows: { id: string; dueDate: string; remindAt: string | null; status: "open" | "reference" }[],
+): Promise<void> {
+  for (const row of rows) {
+    const { error } = await db
+      .from("actions")
+      .update({ status: row.status, due_date: row.dueDate, remind_at: row.remindAt })
+      .eq("id", row.id)
+      .eq("student_id", studentId);
 
-export function pendingOf(student: Student): Pending | null {
-  const pending = student.profile?.pending;
-  return pending && typeof pending === "object" ? (pending as Pending) : null;
-}
-
-export async function setPending(studentId: string, pending: Pending | null): Promise<void> {
-  const { data, error } = await db
-    .from("students")
-    .select("profile")
-    .eq("id", studentId)
-    .single();
-
-  if (error) throw error;
-
-  const profile = { ...(data.profile ?? {}) } as Record<string, unknown>;
-  if (pending) profile.pending = pending;
-  else delete profile.pending;
-
-  const update = await db.from("students").update({ profile }).eq("id", studentId);
-  if (update.error) throw update.error;
+    if (error) throw error;
+  }
 }
 
 /**
- * Store the raw file in the private bucket and record it. Keyed by student so a
- * second student's upload can never collide with the demo student's; the row is
- * what ties the bytes back to the item they produced.
+ * Push the raw bytes into the private bucket. Split from the row insert because
+ * this is the slow half — a megabyte over the wire — and it depends on nothing
+ * the extraction produces, so ingest runs the two concurrently rather than
+ * making the student wait for the upload before Sift can reply.
+ *
+ * Keyed by student, so one student's upload can never collide with another's.
  */
-export async function saveAttachment(input: {
+export async function uploadAttachmentBytes(input: {
   studentId: string;
-  itemId: string;
   filename: string;
   mimeType: string;
   bytes: Buffer;
 }): Promise<string> {
   const storagePath = `${input.studentId}/${Date.now()}-${input.filename}`;
 
-  const upload = await db.storage
+  const { error } = await db.storage
     .from(BUCKET)
     .upload(storagePath, input.bytes, { contentType: input.mimeType, upsert: false });
 
-  if (upload.error) throw upload.error;
+  if (error) throw error;
+  return storagePath;
+}
 
+/** Ties stored bytes back to the item they produced. */
+export async function recordAttachment(input: {
+  studentId: string;
+  itemId: string;
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+}): Promise<void> {
   const { error } = await db.from("attachments").insert({
     student_id: input.studentId,
     item_id: input.itemId,
     filename: input.filename,
     mime_type: input.mimeType,
-    storage_path: storagePath,
+    storage_path: input.storagePath,
   });
 
   if (error) throw error;
-  return storagePath;
+}
+
+/**
+ * The conversation, both directions, oldest first. Sift's own replies are
+ * recorded by `say()` in turn.ts rather than from the provider's echo, so
+ * ordering is deterministic and every turn sees what it actually said.
+ */
+export async function getRecentMessages(
+  studentId: string,
+  limit = 12,
+): Promise<{ direction: string; content: string }[]> {
+  const { data, error } = await db
+    .from("messages")
+    .select("direction, content, created_at")
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return data
+    .reverse()
+    .filter((row) => row.content)
+    .map((row) => ({ direction: row.direction ?? "inbound", content: row.content as string }));
+}
+
+export type SavedItem = {
+  id: string;
+  type: string | null;
+  title: string | null;
+  summary: string | null;
+  actions: { id: string; description: string; due_date: string | null; status: string }[];
+};
+
+/** Everything this student has saved, newest first, with dates attached. */
+export async function listSavedItems(studentId: string, limit = 20): Promise<SavedItem[]> {
+  const { data, error } = await db
+    .from("items")
+    .select("id, type, title, summary")
+    .eq("student_id", studentId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  if (data.length === 0) return [];
+
+  const actions = await db
+    .from("actions")
+    .select("id, item_id, description, due_date, status")
+    .eq("student_id", studentId)
+    .in(
+      "item_id",
+      data.map((item) => item.id),
+    )
+    .order("due_date");
+
+  if (actions.error) throw actions.error;
+
+  return data.map((item) => ({
+    ...item,
+    actions: actions.data
+      .filter((action) => action.item_id === item.id)
+      .map(({ item_id: _ignored, ...action }) => action),
+  }));
 }
