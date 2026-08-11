@@ -4,7 +4,8 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import { today } from "./dates.ts";
 import { env } from "./env.ts";
-import { ArtifactAnalysis } from "./schemas.ts";
+import { ArtifactAnalysisBatch } from "./schemas.ts";
+import type { ArtifactAnalysis } from "./schemas.ts";
 
 // Two models, split by what the call actually needs.
 //
@@ -241,6 +242,17 @@ Classifying:
   usually the honest answer — do not read intent into a bare file.
 - place is non-null only when this is somewhere a student could physically go.
 
+Item boundaries and scalar metadata:
+- One attachment may contain several clearly distinct items (for example, three forwarded
+  flyers or two separate articles). Return each as its own item with a unique item_key. Do
+  not carry a title, author, category, source, or date from one item into another.
+- For title, author, category, publication_date, and source, report every plausible value in
+  metadata_candidates with provenance, confidence, and an excerpt. Preserve contradictions;
+  do not pick a winner. A filename, attachment label, URL slug, or transport field is weak
+  context and must use that source. Visible headings/bylines/page text are stronger.
+- If a field is missing, return no candidate for it. Never fill a missing field from what
+  would be typical for this kind of artifact.
+
 Dates — the part that matters most:
 - Report EVERY date you can see, including ones in the title or filename. Do not filter.
 - role is why the date is there. A year in a title or filename is title_or_filename_year.
@@ -248,6 +260,9 @@ Dates — the part that matters most:
   that already happened is historical_date. "Fall 2024" is academic_term. Only use deadline,
   scheduled_event, or reminder_request when the text ties an actual obligation or occurrence
   to that date.
+- Year-like numbers that are IDs, course numbers, prices, or page references should use
+  identifier, course_number, price, or page_reference with normalized_date null. Incidental
+  numbers use incidental_number. Seeing four digits does not make a number a year.
 - explicit is true ONLY when words like due, submit by, deadline, exam on, meets on, or
   remind me connect an obligation to the date. A date printed in a header, title, or
   filename is never explicit, no matter how confident you are about what it means.
@@ -288,7 +303,7 @@ function contentBlock(input: ReaderInput): Anthropic.ContentBlockParam {
   };
 }
 
-export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnalysis> {
+export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnalysis[]> {
   const now = today(input.timezone);
 
   const response = await anthropic().messages.parse({
@@ -319,8 +334,8 @@ export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnaly
         ],
       },
     ],
-    output_config: { effort: READER_EFFORT, format: zodOutputFormat(ArtifactAnalysis) },
+    output_config: { effort: READER_EFFORT, format: zodOutputFormat(ArtifactAnalysisBatch) },
   });
 
-  return parsedOrThrow(response, "analyzeArtifact");
+  return parsedOrThrow(response, "analyzeArtifact").items;
 }

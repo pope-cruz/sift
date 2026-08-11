@@ -10,18 +10,11 @@
 // in `decide()`, and the model's own `recommended_actionable` is an opinion
 // that carries no weight on its own.
 import { count, friendly, isIsoDate, remindAtFor } from "./dates.ts";
+import { evidenceStrength, reconcileMetadata } from "./metadata.ts";
 import type { ArtifactAnalysis, ArtifactPurpose, DateCandidate } from "./schemas.ts";
 
 /** Roles that could ever describe something the student has to show up for. */
 const ACTIONABLE_ROLES = new Set(["deadline", "scheduled_event", "reminder_request"]);
-
-/**
- * Words that mark material as something to study *from* rather than a schedule
- * to act on. Checked against the filename and the model's title, because this
- * is exactly the signal the old MIME-only routing threw away.
- */
-const PRACTICE_RE =
-  /\b(sample|practice|past|mock|archived?|archive|previous|example|specimen|revision|solutions?|answer\s*key|study\s*guide)\b/i;
 
 /** "2018", "(2018)", "Fall 2018" — a year with no day is never an event date. */
 const YEAR_ONLY_RE = /^[^0-9]*(?:19|20)\d{2}[^0-9]*$/;
@@ -40,6 +33,8 @@ export type AdmissionContext = {
   timezone: string;
   filename: string;
   caption: string;
+  /** A shared caption cannot safely be assigned to every file in a multi-file turn. */
+  captionScope?: "single_artifact" | "multi_artifact_turn";
 };
 
 export type Decision = {
@@ -49,25 +44,17 @@ export type Decision = {
   reason: string;
 };
 
-/**
- * True when the artifact announces itself as study-from material. Deliberately
- * checks the filename even though a filename can never *create* an action —
- * suppressing an action is the safe direction, so weak evidence is allowed to
- * do it.
- */
-export function looksLikePractice(analysis: ArtifactAnalysis, filename: string): boolean {
+/** True when content classification identifies study-from material. */
+export function looksLikePractice(analysis: ArtifactAnalysis, _filename: string): boolean {
   return (
     analysis.purpose === "practice_material" ||
-    analysis.secondary_tags.includes("practice_material") ||
-    PRACTICE_RE.test(filename) ||
-    PRACTICE_RE.test(analysis.title)
+    analysis.secondary_tags.includes("practice_material")
   );
 }
 
 /**
- * The purpose we actually record, after code has had its say. A document called
- * "Sample Midterm" is practice material even when the model, seeing exam-shaped
- * content, called it exam information.
+ * The purpose we actually record, after code has reconciled the reader's
+ * primary and secondary content classifications. Filenames do not participate.
  */
 export function effectivePurpose(
   analysis: ArtifactAnalysis,
@@ -106,6 +93,31 @@ export function decide(
   //    put a deadline on anyone's calendar, whatever role the model assigned.
   if (candidate.source === "filename") {
     return at("evidence_only", "a filename alone can never create an action");
+  }
+  if (
+    candidate.source === "attachment_name" ||
+    candidate.source === "url_slug" ||
+    candidate.source === "transport_metadata"
+  ) {
+    return at("evidence_only", `${candidate.source} alone can never create an action`);
+  }
+
+  // A caption sent alongside several attachments is surrounding transport
+  // context. Without an explicit per-item link, applying it to every artifact
+  // duplicates one requested date/reminder across unrelated items.
+  if (
+    context.captionScope === "multi_artifact_turn" &&
+    (candidate.source === "user_caption" || candidate.source === "user_message")
+  ) {
+    return at("evidence_only", "a shared multi-attachment caption is not scoped to this item");
+  }
+
+  if (candidate.source === "user_caption" || candidate.source === "user_message") {
+    const excerpt = candidate.evidence_excerpt.trim().toLocaleLowerCase("en-US");
+    const caption = context.caption.trim().toLocaleLowerCase("en-US");
+    if (!excerpt || !caption.includes(excerpt)) {
+      return at("evidence_only", "the claimed caption evidence is not present in the message");
+    }
   }
 
   // 3. Resolution. An unresolved date stays unresolved — inventing a year to
@@ -157,7 +169,7 @@ export function decide(
 export type AggregateResult = {
   item: {
     type: string;
-    title: string;
+    title: string | null;
     summary: string;
     category: string | null;
     /** Full provenance, so Sift can later say where a deadline came from. */
@@ -204,15 +216,48 @@ function dedupe(decisions: Decision[]): Decision[] {
 }
 
 /**
- * Never let a blank model title become "Saved ." — fall back to the filename,
- * which is at least something the student recognizes.
+ * Reconcile multiple claims about the same obligation before writing actions.
+ * Stronger evidence wins over surrounding metadata; equally strong conflicting
+ * calendar dates remain unresolved instead of creating two reminders.
  */
-function titleFor(analysis: ArtifactAnalysis, filename: string): string {
-  return (
-    analysis.title.trim() ||
-    filename.replace(/\.[^.]+$/, "").trim() ||
-    "this"
-  );
+function reconcileDateConflicts(decisions: Decision[]): Decision[] {
+  const bySubject = new Map<string, Decision[]>();
+  for (const decision of decisions) {
+    if (decision.outcome === "evidence_only") continue;
+    const key = describe(decision.candidate).toLocaleLowerCase("en-US");
+    bySubject.set(key, [...(bySubject.get(key) ?? []), decision]);
+  }
+
+  const replacements = new Map<Decision, Decision>();
+  for (const group of bySubject.values()) {
+    const dates = new Set(group.map((decision) => decision.candidate.normalized_date));
+    if (dates.size < 2) continue;
+
+    const strongest = Math.max(
+      ...group.map((decision) => evidenceStrength(decision.candidate.source)),
+    );
+    const leading = group.filter(
+      (decision) => evidenceStrength(decision.candidate.source) === strongest,
+    );
+    const leadingDates = new Set(leading.map((decision) => decision.candidate.normalized_date));
+
+    for (const decision of group) {
+      const isLeading = leading.includes(decision);
+      const unresolved = leadingDates.size > 1 || !isLeading;
+      if (unresolved) {
+        replacements.set(decision, {
+          ...decision,
+          outcome: "evidence_only",
+          reason:
+            leadingDates.size > 1
+              ? "equally strong evidence gives contradictory dates for the same obligation"
+              : "a stronger source gives a different date for the same obligation",
+        });
+      }
+    }
+  }
+
+  return decisions.map((decision) => replacements.get(decision) ?? decision);
 }
 
 /**
@@ -228,9 +273,10 @@ export function aggregate(
 ): AggregateResult {
   const practice = looksLikePractice(analysis, context.filename);
   const purpose = effectivePurpose(analysis, context.filename);
+  const metadata = reconcileMetadata(analysis.metadata_candidates);
 
-  const decisions = analysis.date_candidates.map((candidate) =>
-    decide(candidate, context, practice),
+  const decisions = reconcileDateConflicts(
+    analysis.date_candidates.map((candidate) => decide(candidate, context, practice)),
   );
 
   const byDate = (a: Decision, b: Decision) =>
@@ -240,7 +286,7 @@ export function aggregate(
   const open = dedupe(decisions.filter((d) => d.outcome === "open").sort(byDate));
   const reference = dedupe(decisions.filter((d) => d.outcome === "reference").sort(byDate));
 
-  const title = titleFor(analysis, context.filename);
+  const title = metadata.values.title;
 
   const actions: AggregateResult["actions"] = [
     ...open.map((decision) => ({
@@ -269,9 +315,19 @@ export function aggregate(
     user_intent: analysis.user_intent,
     topics: analysis.topics,
     place: analysis.place,
+    item_key: analysis.item_key,
     filename: context.filename,
     caption: context.caption,
+    caption_scope: context.captionScope ?? "single_artifact",
     evaluated_at: context.today,
+    metadata: {
+      values: metadata.values,
+      candidates: metadata.decisions.map((decision) => ({
+        ...decision.candidate,
+        outcome: decision.outcome,
+        decision_reason: decision.reason,
+      })),
+    },
     candidates: decisions.map((decision) => ({
       ...decision.candidate,
       outcome: decision.outcome,
@@ -284,7 +340,7 @@ export function aggregate(
       type: itemType(purpose, analysis),
       title,
       summary: analysis.summary,
-      category: itemCategory(purpose, analysis),
+      category: itemCategory(purpose, analysis, metadata.values.category),
       extractedText,
     },
     actions,
@@ -307,9 +363,12 @@ function itemType(purpose: ArtifactPurpose, analysis: ArtifactAnalysis): string 
   return purpose;
 }
 
-function itemCategory(purpose: ArtifactPurpose, analysis: ArtifactAnalysis): string | null {
-  if (itemType(purpose, analysis) === "place") return "study_spot";
-  if (purpose === "syllabus" || purpose === "assignment_instructions") return "course";
+function itemCategory(
+  purpose: ArtifactPurpose,
+  analysis: ArtifactAnalysis,
+  reconciled: string | null,
+): string | null {
+  if (reconciled) return reconciled;
   return null;
 }
 
@@ -341,7 +400,7 @@ const PURPOSE_LABEL: Record<ArtifactPurpose, string | null> = {
  */
 function confirm(input: {
   analysis: ArtifactAnalysis;
-  title: string;
+  title: string | null;
   purpose: ArtifactPurpose;
   open: Decision[];
   reference: Decision[];
@@ -350,6 +409,7 @@ function confirm(input: {
 }): string {
   const { analysis, title, purpose, open, reference, decisions, context } = input;
   const { timezone } = context;
+  const displayTitle = title ?? "the attachment";
 
   if (itemType(purpose, analysis) === "place" && analysis.place) {
     const where = analysis.place.location
@@ -366,8 +426,8 @@ function confirm(input: {
     const when = friendly(first.candidate.normalized_date!, timezone);
     const lead =
       purpose === "event_flyer"
-        ? `Saved this event — ${title}.`
-        : `Saved ${title}.`;
+        ? `Saved this event — ${displayTitle}.`
+        : `Saved ${displayTitle}.`;
 
     const found =
       open.length === 1
@@ -398,24 +458,29 @@ function confirm(input: {
         : `between ${friendly(first, timezone, withYear)} and ${friendly(last, timezone, withYear)}`;
 
     return (
-      `Saved ${title}. Every date I found lands ${span}, which has already passed. ` +
+      `Saved ${displayTitle}. Every date I found lands ${span}, which has already passed. ` +
       `Want me to keep this as reference only, or are those dates supposed to be current?`
     );
   }
 
   const unresolved = decisions.filter(
-    (decision) => decision.candidate.normalized_date === null,
+    (decision) =>
+      decision.candidate.normalized_date === null &&
+      (decision.candidate.role === "deadline" ||
+        decision.candidate.role === "scheduled_event" ||
+        decision.candidate.role === "reminder_request" ||
+        decision.candidate.role === "ambiguous"),
   );
   if (unresolved.length > 0) {
     return (
-      `Saved ${title} for later, but I couldn't work out what ` +
+      `Saved ${displayTitle} for later, but I couldn't work out what ` +
       `"${unresolved[0]!.candidate.original_text}" refers to — no year I could pin it to. ` +
       `Tell me the date and I'll track it.`
     );
   }
 
   if (purpose === "practice_material") {
-    return `Saved ${title} as practice material. I didn't find an upcoming exam date.`;
+    return `Saved ${displayTitle} as practice material. I didn't find an upcoming exam date.`;
   }
 
   const label = PURPOSE_LABEL[purpose];
@@ -423,6 +488,6 @@ function confirm(input: {
     analysis.topics.length > 0
       ? ` I pulled ${count(analysis.topics.length, "topic", "topics")}.`
       : "";
-  const saved = label ? `Saved ${title} as ${label}.` : `Saved ${title}.`;
+  const saved = label ? `Saved ${displayTitle} as ${label}.` : `Saved ${displayTitle}.`;
   return `${saved}${topics} I didn't find any dates to track.`;
 }

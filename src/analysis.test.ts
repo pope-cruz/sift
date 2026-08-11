@@ -41,18 +41,37 @@ function candidate(overrides: Partial<DateCandidate> = {}): DateCandidate {
   };
 }
 
-function analysis(overrides: Partial<ArtifactAnalysis> = {}): ArtifactAnalysis {
-  return {
-    title: "Untitled",
+function analysis(
+  overrides: Partial<ArtifactAnalysis> & { title?: string | null } = {},
+): ArtifactAnalysis {
+  const { title = "Untitled", ...analysisOverrides } = overrides;
+  const subject: ArtifactAnalysis = {
+    item_key: "item-1",
     summary: "An artifact.",
     purpose: "other",
     secondary_tags: [],
     user_intent: "save_for_later",
     topics: [],
     place: null,
+    metadata_candidates: [],
     date_candidates: [],
-    ...overrides,
+    ...analysisOverrides,
   };
+
+  if (overrides.metadata_candidates === undefined && title?.trim()) {
+    subject.metadata_candidates = [
+      {
+        field: "title",
+        value: title,
+        source: "document_body",
+        evidence_excerpt: title,
+        explicit: true,
+        confidence: 0.9,
+        reason: "visible heading",
+      },
+    ];
+  }
+  return subject;
 }
 
 const openActions = (result: ReturnType<typeof aggregate>) =>
@@ -62,11 +81,11 @@ const openActions = (result: ReturnType<typeof aggregate>) =>
 // Case 1 — Sample Midterm 2018.pdf, no date in the body.
 // ---------------------------------------------------------------------------
 
-test("a sample exam with only a title year is practice material and creates no actions", () => {
+test("a sample exam with only a filename year creates no actions", () => {
   const subject = analysis({
     title: "Sample Midterm 2018",
-    // The model reasonably reads exam-shaped content as exam information; code
-    // has to override that on the strength of the name.
+    // The model reasonably reads exam-shaped content as exam information. The
+    // weak filename must not be allowed to create or reclassify a fact.
     purpose: "exam_information",
     date_candidates: [
       candidate({
@@ -85,13 +104,12 @@ test("a sample exam with only a title year is practice material and creates no a
 
   const result = aggregate(subject, context({ filename: "Sample Midterm 2018.pdf" }));
 
-  assert.equal(result.item.type, "practice_material");
+  assert.equal(result.item.type, "exam_information");
   assert.equal(result.actions.length, 0);
   assert.equal(result.decisions[0]!.outcome, "evidence_only");
   // The 2018 survives as descriptive metadata even though it produced nothing.
   assert.match(result.item.extractedText, /2018/);
-  assert.match(result.confirmation, /practice material/);
-  assert.match(result.confirmation, /didn't find an upcoming exam date/);
+  assert.match(result.confirmation, /didn't find any dates to track/);
 });
 
 test("a model recommending an action cannot override the filename rule", () => {
@@ -188,6 +206,7 @@ test("a past syllabus is saved with its dates as reference, never as open work",
         evidence_excerpt: "Problem Set 1 due September 12, 2025",
       }),
       candidate({
+        label: "Final Exam",
         original_text: "December 11, 2025",
         normalized_date: "2025-12-11",
         evidence_excerpt: "Final Exam on December 11, 2025",
@@ -248,6 +267,26 @@ test("a cafe screenshot is still saved as a retrievable place", () => {
       location: "1 Rockefeller Plaza",
       caption: "Quiet upstairs seating and plenty of outlets.",
     },
+    metadata_candidates: [
+      {
+        field: "title",
+        value: "Blue Bottle Coffee",
+        source: "image_text",
+        evidence_excerpt: "Blue Bottle Coffee",
+        explicit: true,
+        confidence: 0.98,
+        reason: "visible business name",
+      },
+      {
+        field: "category",
+        value: "study_spot",
+        source: "image_text",
+        evidence_excerpt: "Coffee",
+        explicit: true,
+        confidence: 0.9,
+        reason: "visible place content",
+      },
+    ],
   });
 
   const result = aggregate(subject, context({ filename: "IMG_0421.png" }));
@@ -369,8 +408,9 @@ test("a caption can set a date on practice material, the body's own dates cannot
       normalized_date: "2026-09-20",
       role: "reminder_request",
       source: "user_caption",
+      evidence_excerpt: "September 20",
     }),
-    context(),
+    context({ caption: "September 20" }),
     true,
   );
   assert.equal(fromCaption.outcome, "open");
@@ -562,22 +602,22 @@ test("two genuinely different deadlines on the same day both survive", () => {
   assert.equal(openActions(aggregate(subject, context())).length, 2);
 });
 
-test("a blank model title falls back to the filename instead of 'Saved .'", () => {
+test("a missing title stays omitted instead of becoming a filename fact", () => {
   const result = aggregate(
     analysis({ title: "   " }),
     context({ filename: "housing-form.pdf" }),
   );
 
-  assert.equal(result.item.title, "housing-form");
-  assert.match(result.confirmation, /Saved housing-form\./);
+  assert.equal(result.item.title, null);
+  assert.match(result.confirmation, /Saved the attachment\./);
 });
 
-test("effectivePurpose downgrades exam information named as practice", () => {
+test("weak filename adjectives cannot override the content classification", () => {
   const exam = analysis({ title: "Midterm 2", purpose: "exam_information" });
   assert.equal(effectivePurpose(exam, "midterm2.pdf"), "exam_information");
-  assert.equal(effectivePurpose(exam, "Sample Midterm 2.pdf"), "practice_material");
-  assert.equal(effectivePurpose(exam, "past-midterm2.pdf"), "practice_material");
-  assert.equal(effectivePurpose(exam, "mock exam.pdf"), "practice_material");
+  assert.equal(effectivePurpose(exam, "Sample Midterm 2.pdf"), "exam_information");
+  assert.equal(effectivePurpose(exam, "past-midterm2.pdf"), "exam_information");
+  assert.equal(effectivePurpose(exam, "mock exam.pdf"), "exam_information");
 
   // A real syllabus is not reclassified just because it mentions nothing special.
   const syllabus = analysis({ title: "CS 4414 Syllabus", purpose: "syllabus" });

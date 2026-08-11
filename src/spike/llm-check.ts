@@ -36,38 +36,41 @@ if (!path) {
           : "image/jpeg";
 
   const filename = basename(path);
-  const analysis = await analyzeArtifact({ bytes, mimeType, filename, caption, timezone });
+  const analyses = await analyzeArtifact({ bytes, mimeType, filename, caption, timezone });
 
   console.log("\n=== analysis ===");
-  console.log({
-    title: analysis.title,
-    purpose: analysis.purpose,
-    secondary_tags: analysis.secondary_tags,
-    user_intent: analysis.user_intent,
-    place: analysis.place,
-    topics: analysis.topics.length,
-    candidates: analysis.date_candidates.length,
-  });
+  for (const analysis of analyses) {
+    console.log({
+      item_key: analysis.item_key,
+      purpose: analysis.purpose,
+      secondary_tags: analysis.secondary_tags,
+      user_intent: analysis.user_intent,
+      place: analysis.place,
+      topics: analysis.topics.length,
+      metadata_candidates: analysis.metadata_candidates.length,
+      date_candidates: analysis.date_candidates.length,
+    });
 
-  const result = aggregate(analysis, {
-    today: today(timezone),
-    timezone,
-    filename,
-    caption,
-  });
+    const result = aggregate(analysis, {
+      today: today(timezone),
+      timezone,
+      filename,
+      caption,
+    });
 
-  console.log("\n=== date rulings ===");
-  for (const decision of result.decisions) {
-    console.log(
-      `  ${decision.outcome.padEnd(13)} "${decision.candidate.original_text}" ` +
-        `(${decision.candidate.role} / ${decision.candidate.source}) — ${decision.reason}`,
-    );
+    console.log("\n=== date rulings ===");
+    for (const decision of result.decisions) {
+      console.log(
+        `  ${decision.outcome.padEnd(13)} "${decision.candidate.original_text}" ` +
+          `(${decision.candidate.role} / ${decision.candidate.source}) — ${decision.reason}`,
+      );
+    }
+    if (result.decisions.length === 0) console.log("  (no dates found)");
+
+    console.log("\n=== would persist ===");
+    console.log({ item: { ...result.item, extractedText: "[…]" }, actions: result.actions });
+
+    console.log("\n=== would reply ===");
+    console.log(result.confirmation);
   }
-  if (result.decisions.length === 0) console.log("  (no dates found)");
-
-  console.log("\n=== would persist ===");
-  console.log({ item: { ...result.item, extractedText: "[…]" }, actions: result.actions });
-
-  console.log("\n=== would reply ===");
-  console.log(result.confirmation);
 }

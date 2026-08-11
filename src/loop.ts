@@ -1,7 +1,9 @@
 import type { SpectrumInstance } from "spectrum-ts";
 
+import { parts, summarize } from "./content.ts";
 import { getStudentBySpaceId, recordMessage } from "./db.ts";
-import { handleTurn, parts, summarize } from "./turn.ts";
+import { safeDiagnostic } from "./diagnostics.ts";
+import { handleTurn } from "./turn.ts";
 
 // Delivery signals, not conversation. This line emits `read` receipts as their
 // own messages; they must never reach a turn or the messages table.
@@ -36,7 +38,11 @@ export async function runLoop(app: SpectrumInstance) {
     } catch (error) {
       // A failure here is infrastructure (DB down), not turn logic — keep the
       // loop alive so the next message still gets a chance.
-      console.error("loop error", { spaceId: space.id, messageId: message.id, error });
+      console.error("loop error", {
+        spaceId: space.id,
+        messageId: message.id,
+        error: safeDiagnostic(error),
+      });
     }
   }
 }

@@ -7,10 +7,15 @@
     "start": "tsx src/index.ts",
     "test": "node --experimental-strip-types --test src/*.test.ts",
     "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit",
+    "build": "tsc --noEmit",
+    "verify": "npm test && npm run typecheck && npm run lint && npm run build",
     "dev": "tsx watch src/index.ts",
     "seed": "tsx src/seed.ts",
     "spike:send": "tsx src/spike/proactive-send.ts",
-    "llm:check": "tsx src/spike/llm-check.ts"
+    "llm:check": "tsx src/spike/llm-check.ts",
+    "live:run": "tsx src/spike/live-ingest.ts",
+    "live:snapshot": "tsx src/spike/live-snapshot.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",

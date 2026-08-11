@@ -91,7 +91,7 @@ const BUCKET = "attachments";
 export async function insertItem(input: {
   studentId: string;
   type: string;
-  title: string;
+  title: string | null;
   summary: string;
   extractedText?: string | null;
   category?: string | null;
@@ -209,6 +209,12 @@ export async function uploadAttachmentBytes(input: {
 
   if (error) throw error;
   return storagePath;
+}
+
+/** Remove an uploaded object when analysis or persistence cannot finish. */
+export async function deleteAttachmentBytes(storagePath: string): Promise<void> {
+  const { error } = await db.storage.from(BUCKET).remove([storagePath]);
+  if (error) throw error;
 }
 
 /** Ties stored bytes back to the item they produced. */

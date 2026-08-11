@@ -18,7 +18,9 @@ import type { Attachment } from "spectrum-ts";
 
 import { aggregate, type AdmissionContext } from "./analysis.ts";
 import { today } from "./dates.ts";
+import { InputDiagnosticError, safeDiagnostic } from "./diagnostics.ts";
 import {
+  deleteAttachmentBytes,
   deleteItemCascade,
   insertActions,
   insertItem,
@@ -27,10 +29,8 @@ import {
   type Student,
 } from "./db.ts";
 import { analyzeArtifact } from "./llm.ts";
-
-// What Claude vision accepts. iPhone photos arrive as image/heic, which it does
-// not — a screenshot is a PNG, so we say so plainly instead of failing.
-const VISION_MIME = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+import { classifyInputMime, uniqueAttachments, validateReadableBytes } from "./input.ts";
+import { rollbackArtifact, settleArtifactPreparation } from "./rollback.ts";
 
 const isPdf = (mimeType: string) => mimeType === "application/pdf";
 const isImage = (mimeType: string) => mimeType.startsWith("image/");
@@ -99,12 +99,15 @@ async function ingestArtifact(
   student: Student,
   file: Attachment,
   caption: string,
+  captionScope: AdmissionContext["captionScope"],
 ): Promise<string> {
   // `size` is optional on the provider's attachment, so it's a cheap early
   // out, not the check itself — the real one is on the bytes we actually got.
   if (file.size !== undefined && file.size > MAX_BYTES) return tooBig(file.name);
 
   const bytes = await timed(`read ${file.name}`, () => file.read());
+
+  await timed("validate", () => validateReadableBytes(bytes, file.mimeType, file.name));
 
   // An image gets downscaled below, so only an oversized PDF is fatal here.
   if (isPdf(file.mimeType) && bytes.length > MAX_BYTES) return tooBig(file.name);
@@ -116,8 +119,8 @@ async function ingestArtifact(
 
   // The upload needs nothing from the analysis, and the student is waiting on
   // the analysis alone — so pay for them once, not back to back.
-  const [analysis, storagePath] = await Promise.all([
-    timed("analyze", () =>
+  const prepared = await settleArtifactPreparation({
+    analysis: timed("analyze", () =>
       analyzeArtifact({
         bytes: forModel.bytes,
         mimeType: forModel.mimeType,
@@ -127,7 +130,7 @@ async function ingestArtifact(
       }),
     ),
     // The full-resolution original goes to storage, not the shrunken copy.
-    timed("upload", () =>
+    upload: timed("upload", () =>
       uploadAttachmentBytes({
         studentId: student.id,
         filename: file.name,
@@ -135,7 +138,9 @@ async function ingestArtifact(
         bytes,
       }),
     ),
-  ]);
+    deleteUpload: deleteAttachmentBytes,
+  });
+  const { analysis: analyses, storagePath } = prepared;
 
   // Everything below is deterministic. The model has had its say; from here the
   // rules decide, and the reply is built from what was actually written.
@@ -144,51 +149,61 @@ async function ingestArtifact(
     timezone: student.timezone,
     filename: file.name,
     caption,
+    captionScope,
   };
 
-  const result = aggregate(analysis, context);
+  const results = analyses.map((analysis) => aggregate(analysis, context));
 
-  for (const decision of result.decisions) {
-    console.log(
-      `[ingest] date "${decision.candidate.original_text}" ` +
-        `(${decision.candidate.role}, ${decision.candidate.source}) -> ` +
-        `${decision.outcome}: ${decision.reason}`,
-    );
+  for (const result of results) {
+    for (const decision of result.decisions) {
+      console.log(
+        `[ingest] date (${decision.candidate.role}, ${decision.candidate.source}) -> ` +
+          `${decision.outcome}: ${decision.reason}`,
+      );
+    }
   }
 
-  // The item is written whether or not anything became actionable — an artifact
-  // that produces zero actions is still an artifact the student wanted kept.
-  const itemId = await insertItem({
-    studentId: student.id,
-    type: result.item.type,
-    title: result.item.title,
-    summary: result.item.summary,
-    extractedText: result.item.extractedText,
-    category: result.item.category,
-  });
-
-  // No transactions in Supabase JS, so a failure after insertItem would leave
-  // an item whose dates never made it into `actions` — SAVED would then show a
-  // syllabus Sift silently isn't tracking. Compensate: remove the item so the
-  // student's resend starts clean, and let the turn's catch send TROUBLE.
+  // One attachment can yield several isolated items. If any write fails, roll
+  // every item from this attachment back so a resend cannot duplicate a subset.
+  const itemIds: string[] = [];
   try {
-    await recordAttachment({
-      studentId: student.id,
-      itemId,
-      filename: file.name,
-      mimeType: file.mimeType,
-      storagePath,
-    });
+    for (const result of results) {
+      const itemId = await insertItem({
+        studentId: student.id,
+        type: result.item.type,
+        title: result.item.title,
+        summary: result.item.summary,
+        extractedText: result.item.extractedText,
+        category: result.item.category,
+      });
+      itemIds.push(itemId);
 
-    await insertActions(student.id, itemId, result.actions);
+      await recordAttachment({
+        studentId: student.id,
+        itemId,
+        filename: file.name,
+        mimeType: file.mimeType,
+        storagePath,
+      });
+      await insertActions(student.id, itemId, result.actions);
+    }
   } catch (error) {
-    await deleteItemCascade(student.id, itemId).catch((cleanupError) => {
-      console.error("[ingest] cleanup after failed write also failed", { itemId, cleanupError });
+    const cleanupFailures = await rollbackArtifact({
+      itemIds,
+      storagePath,
+      deleteItem: (itemId) => deleteItemCascade(student.id, itemId),
+      deleteUpload: deleteAttachmentBytes,
     });
+    for (const failure of cleanupFailures) {
+      console.error("[ingest] cleanup failed", {
+        target: failure.target,
+        error: safeDiagnostic(failure.error),
+      });
+    }
     throw error;
   }
 
-  return result.confirmation;
+  return results.map((result) => result.confirmation).join(" ");
 }
 
 /**
@@ -215,16 +230,32 @@ async function route(input: {
   text: string;
   files: Attachment[];
 }): Promise<string> {
-  const { student, text, files } = input;
+  const { student, text } = input;
+  const files = uniqueAttachments(input.files);
 
   const replies: string[] = [];
 
   for (const file of files) {
     // The only decision MIME type gets to make: can the model read these bytes,
     // and as which block type. What the content *means* is decided downstream.
-    if (isPdf(file.mimeType) || (isImage(file.mimeType) && VISION_MIME.has(file.mimeType))) {
-      replies.push(await ingestArtifact(student, file, text));
-    } else if (isImage(file.mimeType)) {
+    const kind = classifyInputMime(file.mimeType);
+    if (kind === "pdf" || kind === "image") {
+      try {
+        replies.push(
+          await ingestArtifact(
+            student,
+            file,
+            text,
+            files.length === 1 ? "single_artifact" : "multi_artifact_turn",
+          ),
+        );
+      } catch (error) {
+        const diagnostic = safeDiagnostic(error);
+        console.error("[ingest] artifact failed", { code: diagnostic.code, error: diagnostic });
+        if (error instanceof InputDiagnosticError) replies.push(error.userMessage);
+        else replies.push(`I couldn't finish reading ${file.name}. Try sending it again.`);
+      }
+    } else if (kind === "unsupported_image") {
       replies.push(
         `I can't read ${file.name} — it came through as ${file.mimeType}. A screenshot works better than a photo.`,
       );

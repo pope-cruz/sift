@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import type { Content, Message, Space } from "spectrum-ts";
+import type { Message, Space } from "spectrum-ts";
 
+import { attachmentsOf, parts, textOf } from "./content.ts";
 import {
   attachSpaceToStudent,
   backfillMessageStudent,
@@ -9,6 +10,7 @@ import {
   recordMessage,
   type Student,
 } from "./db.ts";
+import { safeDiagnostic } from "./diagnostics.ts";
 import { env } from "./env.ts";
 import { ingest } from "./ingest.ts";
 import { respond } from "./llm.ts";
@@ -22,38 +24,6 @@ const TROUBLE = "Hmm, I had trouble sifting that — mind sending it again?";
 
 const CANT_READ =
   "I can't read that one yet — send me a PDF, a screenshot, or just type it and I'll keep track of it.";
-
-/**
- * A captioned attachment arrives as ONE message with `content.type === "group"`,
- * whose items hold the parts (attachment first, then text). Verified on the real
- * line in Phase 0 for image/jpeg and application/pdf. So the unit of work is the
- * parts of one message — collect by type, never rely on ordering.
- */
-export function parts(message: Message): Content[] {
-  if (message.content.type === "group") {
-    return message.content.items.map((item) => item.content);
-  }
-  return [message.content];
-}
-
-export function textOf(contents: Content[]): string {
-  return contents
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
-    .join(" ")
-    .trim();
-}
-
-export function attachmentsOf(contents: Content[]) {
-  return contents.filter((part) => part.type === "attachment");
-}
-
-/** What lands in messages.content — a turn can carry both text and files. */
-export function summarize(contents: Content[]): string {
-  const text = textOf(contents);
-  const files = attachmentsOf(contents).map((part) => part.name);
-  return [text, files.length ? `[${files.join(", ")}]` : ""].filter(Boolean).join(" ").trim();
-}
 
 /**
  * Send and persist. This line does not echo outbound messages back into the
@@ -77,7 +47,10 @@ export async function say(space: Space, studentId: string | null, text: string) 
       content: text,
     });
   } catch (error) {
-    console.error("failed to persist outbound message", { spaceId: space.id, error });
+    console.error("failed to persist outbound message", {
+      spaceId: space.id,
+      error: safeDiagnostic(error),
+    });
   }
 }
 
@@ -148,7 +121,11 @@ export async function handleTurn(space: Space, message: Message, student: Studen
 
     await say(space, active.id, reply);
   } catch (error) {
-    console.error("turn failed", { spaceId: space.id, messageId: message.id, error });
+    console.error("turn failed", {
+      spaceId: space.id,
+      messageId: message.id,
+      error: safeDiagnostic(error),
+    });
     // Through say(), so the failure is in the transcript. Sent bare, the next
     // turn's context has a gap where the apology was, and Sift answers "what
     // happened?" as though the turn never occurred.
