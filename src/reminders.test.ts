@@ -65,7 +65,7 @@ function claim(overrides: Partial<ReminderClaim> = {}): ReminderClaim {
 test("reminder copy is concise and grounded in the saved action and date", () => {
   assert.equal(
     composeReminder(claim(), instant("2026-08-11", "18:00")),
-    "Your CS 4414 reading quiz is due tomorrow. This is a good time to finish it.",
+    "CS 4414 reading quiz is due tomorrow. Good time to finish it.",
   );
 });
 
@@ -81,7 +81,7 @@ test("an exact source-stated time survives storage and appears in the reminder",
   assert.equal(dueTime, "09:30");
   assert.equal(
     composeReminder(claim({ dueTime }), instant("2026-08-11", "18:00")),
-    "Your CS 4414 reading quiz is due tomorrow at 9:30 AM. This is a good time to finish it.",
+    "CS 4414 reading quiz is due tomorrow at 9:30 AM. Good time to finish it.",
   );
 });
 

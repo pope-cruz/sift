@@ -181,10 +181,10 @@ const answer = await respond({
   fallbackReply: fallbackReply(context),
 });
 if (!/\bProject 1\b/i.test(answer)) throw new Error("Live answer omitted Project 1.");
-if (!answer.toLowerCase().includes(CAFE_NAME.toLowerCase())) {
-  throw new Error(`Live answer omitted ${CAFE_NAME}.`);
-}
 if (/^\s*(#|\*|- )/m.test(answer)) throw new Error("Live answer used iMessage-hostile Markdown.");
+if (!/\b(?:start|first|prioriti[sz]e|finish|then|after)\b/i.test(answer)) {
+  throw new Error("Live answer listed context without making a recommendation.");
+}
 
 let delivered = false;
 if (send) {

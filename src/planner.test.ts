@@ -219,7 +219,8 @@ test("retrieval reply contracts preserve exact saved titles and dates", () => {
 test("retrieval fallback clearly reports an item with no supported due date", () => {
   const result = context("When is Project 1 due?", { items: [PROJECT] });
   const answer = fallbackReply(result);
-  assert.match(answer, /no open saved due date/i);
+  assert.equal(answer, "Project 1 doesn’t have a due date yet.");
+  assert.doesNotMatch(answer, /saved|record|stored/i);
   assert.equal(validateReply(result, answer), null);
 });
 
@@ -233,8 +234,8 @@ test("saved-place retrieval cannot silently substitute an unsupported place", ()
     place: { name: "Common Grounds" },
   });
   const result = context("What was the café I saved?", { items: [cafe] });
-  assert.match(validateReply(result, "You saved a nice coffee shop.") ?? "", /Common Grounds/);
-  assert.equal(validateReply(result, "You saved Common Grounds as a study spot."), null);
+  assert.match(validateReply(result, "A quiet coffee shop.") ?? "", /Common Grounds/);
+  assert.equal(validateReply(result, "Common Grounds is a quiet study spot."), null);
 });
 
 test("weekly planning exposes several real deadlines in date order", () => {
@@ -287,10 +288,10 @@ test("the plan reply contract rejects omitted facts and accepts the grounded cal
     place: { name: "Juniper Study Cafe" },
   });
   const result = context("Plan my week", { items: [PROJECT, cafe], actions: [PROJECT_DUE] });
-  assert.match(validateReply(result, "Work on Project 1 this week. Take breaks." ) ?? "", /date/);
-  assert.match(
-    validateReply(result, "Prioritize Project 1, due Mon, Aug 17. Work somewhere quiet.") ?? "",
-    /Juniper Study Cafe/,
+  assert.match(validateReply(result, "Project 1 is due Mon, Aug 17." ) ?? "", /recommendation/i);
+  assert.equal(
+    validateReply(result, "I’d prioritize Project 1, due Mon, Aug 17. Use somewhere quiet."),
+    null,
   );
   assert.equal(
     validateReply(
@@ -427,7 +428,7 @@ test("compact profile preserves stored schedule evidence for a supported lighter
   assert.match(rendered, /Thursday/);
   assert.match(rendered, /class at 10/);
   const answer = fallbackReply(result);
-  assert.match(answer, /Thursday is your lightest stored day/);
+  assert.match(answer, /Thursday is lighter/);
   assert.equal(validateReply(result, answer), null);
 });
 
@@ -439,4 +440,212 @@ test("a tied or underspecified schedule does not manufacture a lighter day", () 
     rows: { items: [PROJECT], actions: [PROJECT_DUE], messages: [] },
   });
   assert.equal(tied.lighterDay, null);
+});
+
+test("plural deadline fallback answers directly without database-like narration", () => {
+  const second = action({
+    id: "quiz",
+    itemId: "project-1",
+    description: "Reading quiz due",
+    due: "2026-08-14",
+  });
+  const result = context("What do I have coming up?", {
+    items: [PROJECT],
+    actions: [second, PROJECT_DUE],
+  });
+  const answer = fallbackReply(result);
+  assert.equal(answer, "2 coming up: Reading quiz Fri, Aug 14, then Project 1 Mon, Aug 17.");
+  assert.doesNotMatch(answer, /stored|saved action|record|retriev/i);
+  assert.equal(validateReply(result, answer), null);
+});
+
+test("honest empty states are short and do not append an offer", () => {
+  const result = context("What is due this week?", {});
+  const answer = fallbackReply(result);
+  assert.equal(answer, "Nothing due in the next two weeks.");
+  assert.doesNotMatch(answer, /would you|let me know|anything else/i);
+  assert.equal(validateReply(result, answer), null);
+});
+
+test("planning fallback chooses a priority and sequence instead of listing", () => {
+  const second = action({
+    id: "project-2",
+    itemId: "project-1",
+    description: "Project 2 due",
+    due: "2026-08-20",
+  });
+  const result = context("Plan my week", { items: [PROJECT], actions: [PROJECT_DUE, second] });
+  const answer = fallbackReply(result);
+  assert.match(answer, /^I’d start with Project 1/);
+  assert.match(answer, /Then move to Project 2/);
+  assert.equal(validateReply(result, answer), null);
+});
+
+test("every later deadline a plan mentions must preserve its own date", () => {
+  const meeting = action({
+    id: "club-meeting",
+    itemId: "project-1",
+    description: "Club meeting",
+    due: "2026-08-15",
+  });
+  const result = context("Plan my week", { items: [PROJECT], actions: [PROJECT_DUE, meeting] });
+  assert.match(
+    validateReply(
+      result,
+      "I’d start with Club meeting on Thu, Aug 15, then move to Project 1, due Mon, Aug 17.",
+    ) ?? "",
+    /2026-08-15/,
+  );
+  assert.equal(
+    validateReply(
+      result,
+      "I’d start with Club meeting on Sat, Aug 15, then move to Project 1, due Mon, Aug 17.",
+    ),
+    null,
+  );
+});
+
+test("a useful place is optional in a plan rather than mandatory memory display", () => {
+  const cafe = item({
+    id: "cafe-optional",
+    title: "Juniper",
+    summary: "A quiet café.",
+    type: "place",
+    place: { name: "Juniper" },
+  });
+  const result = context("What should I do first?", { items: [PROJECT, cafe], actions: [PROJECT_DUE] });
+  assert.equal(validateReply(result, "I’d start with Project 1, due Mon, Aug 17."), null);
+});
+
+test("questions are rejected after a complete answer but required for true ambiguity", () => {
+  const complete = context("When is Project 1 due?", { items: [PROJECT], actions: [PROJECT_DUE] });
+  assert.match(
+    validateReply(complete, "Project 1 is due Mon, Aug 17. Want help planning?") ?? "",
+    /generic offer|question is needed/i,
+  );
+
+  const places = [
+    item({ id: "p1", title: "Juniper", summary: "Quiet.", type: "place", place: { name: "Juniper" } }),
+    item({ id: "p2", title: "Common Grounds", summary: "Outlets.", type: "place", place: { name: "Common Grounds" } }),
+  ];
+  const ambiguous = context("What was the café I saved?", { items: places });
+  assert.match(validateReply(ambiguous, "Juniper and Common Grounds both fit.") ?? "", /question/i);
+  assert.equal(validateReply(ambiguous, "Juniper or Common Grounds — which one do you mean?"), null);
+});
+
+test("multi-turn 'what is next' skips the answer the user just saw", () => {
+  const quiz = action({
+    id: "quiz-follow-up",
+    itemId: "project-1",
+    description: "Reading quiz due",
+    due: "2026-08-14",
+  });
+  const result = context("What’s next after that?", {
+    items: [PROJECT],
+    actions: [quiz, PROJECT_DUE],
+    messages: [
+      message({ id: "u1", direction: "inbound", content: "What is due first?" }),
+      message({ id: "a1", direction: "outbound", content: "Reading quiz is due Fri, Aug 14." }),
+      message({ id: "u2", direction: "inbound", content: "What’s next after that?" }),
+    ],
+  });
+  const answer = fallbackReply(result);
+  assert.equal(answer, "Project 1 is due Mon, Aug 17.");
+  assert.doesNotMatch(answer, /Reading quiz/);
+  assert.equal(validateReply(result, answer), null);
+});
+
+test("mutation validation keeps confirmations short and prevents recap", () => {
+  const result = context("Add the club meeting for August 15", { items: [PROJECT], actions: [PROJECT_DUE] });
+  const attempt = {
+    completedTools: [{
+      name: "save_note",
+      result: JSON.stringify({
+        ok: true,
+        kind: "mutation",
+        confirmation: "Done — club meeting added for Sat, Aug 15.",
+        required_terms: ["club meeting", "Sat, Aug 15"],
+      }),
+    }],
+  };
+  assert.equal(validateReply(result, "Done — club meeting added for Sat, Aug 15.", attempt), null);
+  assert.match(
+    validateReply(
+      result,
+      "Done — club meeting added for Sat, Aug 15. Project 1 is still due Mon, Aug 17. Want help planning?",
+      attempt,
+    ) ?? "",
+    /generic offer|too long/i,
+  );
+});
+
+test("a resolved successful mutation does not ask again just because retrieval was ambiguous", () => {
+  const places = [
+    item({ id: "m1", title: "Juniper", summary: "Quiet.", type: "place", place: { name: "Juniper" } }),
+    item({ id: "m2", title: "Common Grounds", summary: "Outlets.", type: "place", place: { name: "Common Grounds" } }),
+  ];
+  const result = context("What was the cafe I saved?", { items: places });
+  assert.equal(result.request.matchStatus, "ambiguous");
+  const attempt = {
+    completedTools: [{
+      name: "cancel_reminder",
+      result: JSON.stringify({
+        ok: true,
+        kind: "reminder",
+        confirmation: "Done — reminder cancelled.",
+        required_terms: ["cancelled"],
+      }),
+    }],
+  };
+  assert.equal(validateReply(result, "Done — reminder cancelled.", attempt), null);
+});
+
+test("reminder confirmation requires the exact chosen time and no generic closer", () => {
+  const result = context("Remind me tomorrow instead", { items: [PROJECT], actions: [PROJECT_DUE] });
+  const attempt = {
+    completedTools: [{
+      name: "reschedule_reminder",
+      result: JSON.stringify({
+        ok: true,
+        kind: "reminder",
+        confirmation: "Done — I’ll remind you Thu, Aug 13 at 6:00 PM.",
+        required_terms: ["Thu, Aug 13 at 6:00 PM"],
+      }),
+    }],
+  };
+  assert.match(validateReply(result, "Done — reminder moved.", attempt) ?? "", /Thu, Aug 13/);
+  assert.equal(validateReply(result, "Done — I’ll remind you Thu, Aug 13 at 6:00 PM.", attempt), null);
+});
+
+test("a failed mutation cannot be phrased as completed", () => {
+  const result = context("Move the reminder to yesterday", { items: [PROJECT], actions: [PROJECT_DUE] });
+  const attempt = {
+    completedTools: [{
+      name: "reschedule_reminder",
+      result: JSON.stringify({
+        ok: false,
+        user_message: "That reminder time has already passed. When should I move it to?",
+        needs_clarification: true,
+      }),
+    }],
+  };
+  assert.match(validateReply(result, "Done — reminder moved?", attempt) ?? "", /do not claim success/i);
+  assert.equal(validateReply(result, "That time has already passed — when should I move it to?", attempt), null);
+});
+
+test("an undated reminder request asks only for the missing time", () => {
+  const result = context("Remind me about the club meeting", {});
+  const attempt = {
+    completedTools: [{
+      name: "save_note",
+      result: JSON.stringify({
+        ok: true,
+        kind: "reminder",
+        needs_clarification: true,
+        confirmation: "Club meeting is saved — when should I remind you?",
+        required_terms: ["Club meeting"],
+      }),
+    }],
+  };
+  assert.equal(validateReply(result, "Club meeting is saved — when should I remind you?", attempt), null);
 });

@@ -18,7 +18,7 @@ import {
   rescheduleActions,
   type Student,
 } from "./db.ts";
-import { isIsoDate, localInstant, remindAtFor, today } from "./dates.ts";
+import { friendly, isIsoDate, localInstant, remindAtFor, today } from "./dates.ts";
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -104,6 +104,10 @@ export const TOOLS: Anthropic.Tool[] = [
             required: ["description"],
           },
         },
+        reminder_requested: {
+          type: "boolean",
+          description: "true only when the student explicitly asked to be reminded",
+        },
       },
       required: ["title", "summary"],
     },
@@ -144,11 +148,13 @@ export const TOOLS: Anthropic.Tool[] = [
  * bare sentence.
  */
 function badId(given: string, items: { id: string; title: string | null }[]): string {
-  return (
-    `FAILED — nothing was changed. "${given}" is not a valid item_id. ` +
-    `Valid ids: ${items.map((item) => `${item.id} (${item.title})`).join("; ")}. ` +
-    `Retry with one of these, and do not tell the student anything changed unless it did.`
-  );
+  return JSON.stringify({
+    ok: false,
+    needs_clarification: true,
+    user_message: "I couldn’t tell which item you meant. Which one should I change?",
+    invalid_item_id: given,
+    valid_items: items.map((item) => ({ id: item.id, title: item.title })),
+  });
 }
 
 function badActionId(
@@ -158,10 +164,28 @@ function badActionId(
   const valid = items.flatMap((item) =>
     item.actions.map((action) => `${action.id} (${item.title ?? action.description})`),
   );
-  return (
-    `FAILED — nothing was changed. "${given}" is not a valid action_id. ` +
-    `Valid action ids: ${valid.join("; ")}. Retry with one of these.`
-  );
+  return JSON.stringify({
+    ok: false,
+    needs_clarification: true,
+    user_message: "I couldn’t tell which deadline you meant. Which one should I change?",
+    invalid_action_id: given,
+    valid_actions: valid,
+  });
+}
+
+function toolFailure(userMessage: string, needsClarification = false): string {
+  return JSON.stringify({ ok: false, needs_clarification: needsClarification, user_message: userMessage });
+}
+
+function naturalInstant(iso: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
 }
 
 /**
@@ -252,7 +276,7 @@ export async function runTool(
     case "update_dates": {
       const itemId = String(input.item_id ?? "");
       const year = Number(input.year);
-      if (!Number.isFinite(year)) return "Error: year must be a number.";
+      if (!Number.isFinite(year)) return toolFailure("I need a valid year to make that change.", true);
 
       const items = await listSavedItems(student.id);
       const item = items.find((candidate) => candidate.id === itemId);
@@ -261,7 +285,7 @@ export async function runTool(
       const dated = item.actions.filter(
         (action): action is typeof action & { due_date: string } => action.due_date !== null,
       );
-      if (dated.length === 0) return "That item has no dates to move.";
+      if (dated.length === 0) return toolFailure(`${item.title ?? "That item"} has no dates to move.`);
 
       const moved = dated.map((action) => {
         const dueDate = `${String(year).padStart(4, "0")}${action.due_date.slice(4)}`;
@@ -275,15 +299,17 @@ export async function runTool(
       await rescheduleActions(student.id, moved);
 
       const tracked = moved.filter((row) => row.status === "open").length;
+      const title = item.title ?? "that item";
       return JSON.stringify({
+        ok: true,
         moved: moved.length,
         year,
         now_tracked: tracked,
         left_as_reference: moved.length - tracked,
-        note:
-          tracked === 0
-            ? "Every date is still in the past even after the move, so none are being tracked. Tell the student."
-            : undefined,
+        confirmation: tracked === 0
+          ? `Done — moved ${title} to ${year}, but those dates are still past, so reminders stay off.`
+          : `Done — moved ${title} to ${year}.`,
+        required_terms: [title, String(year)],
       });
     }
 
@@ -312,13 +338,18 @@ export async function runTool(
         (action) => scheduleFor(action.due_date, student, wanted, action.due_time).status === "open",
       ).length;
 
+      const title = item.title ?? "that item";
+      if (wanted && tracked === 0) {
+        return toolFailure("Those dates are still in the past. What year should they use?", true);
+      }
       return JSON.stringify({
+        ok: true,
         updated: dated.length,
         now_tracked: tracked,
-        note:
-          wanted && tracked === 0
-            ? "Every date has already passed, so nothing can be tracked. Ask which year they should be."
-            : undefined,
+        confirmation: wanted
+          ? `Done — tracking ${tracked} ${tracked === 1 ? "deadline" : "deadlines"} for ${title}.`
+          : `Done — reminders are off for ${title}.`,
+        required_terms: [title],
       });
     }
 
@@ -330,7 +361,7 @@ export async function runTool(
 
       const evidence = await getItemEvidence(student.id, itemId);
       if (!evidence?.extractedText) {
-        return "No reading notes were kept for that one — it was saved before, or without, a file.";
+        return "No reading notes are available for that one, so say you can’t verify it rather than guessing.";
       }
 
       return renderEvidence(evidence.title, evidence.extractedText);
@@ -341,51 +372,77 @@ export async function runTool(
         ? (input.deadlines as { description?: string; due_date?: string; due_time?: string }[])
         : [];
 
+      const scheduled = deadlines
+        .filter((entry) => entry.description)
+        .map((entry) => {
+          const dueDate = entry.due_date ?? null;
+          return {
+            description: entry.description as string,
+            dueDate,
+            ...scheduleFor(dueDate, student, true, entry.due_time ?? null),
+          };
+        });
+
+      const title = String(input.title ?? "Note");
       const itemId = await insertItem({
         studentId: student.id,
         type: "note",
-        title: String(input.title ?? "Note"),
+        title,
         summary: String(input.summary ?? ""),
         extractedText: JSON.stringify({ text_note_deadlines: deadlines }),
         category: "note",
       });
 
-      await insertActions(
-        student.id,
-        itemId,
-        deadlines
-          .filter((entry) => entry.description)
-          .map((entry) => {
-            const dueDate = entry.due_date ?? null;
-            return {
-              description: entry.description as string,
-              dueDate,
-              ...scheduleFor(dueDate, student, true, entry.due_time ?? null),
-            };
-          }),
-      );
+      await insertActions(student.id, itemId, scheduled);
 
-      return JSON.stringify({ saved: true, item_id: itemId, deadlines: deadlines.length });
+      const first = scheduled.find((entry) => entry.dueDate !== null);
+      const reminder = first?.remindAt ? naturalInstant(first.remindAt, student.timezone) : null;
+      const due = first?.dueDate ? friendly(first.dueDate, student.timezone) : null;
+      const reminderRequested = input.reminder_requested === true;
+      if (reminderRequested && !reminder) {
+        return JSON.stringify({
+          ok: true,
+          kind: "reminder",
+          needs_clarification: true,
+          saved: true,
+          item_id: itemId,
+          confirmation: `${title} is saved — when should I remind you?`,
+          required_terms: [title],
+        });
+      }
+      const confirmation = first && due
+        ? `Done — ${title} added for ${due}.` +
+          (reminderRequested && reminder ? ` I’ll remind you ${reminder}.` : "")
+        : `Done — ${title} saved.`;
+      return JSON.stringify({
+        ok: true,
+        kind: reminderRequested ? "reminder" : "mutation",
+        saved: true,
+        item_id: itemId,
+        deadlines: scheduled,
+        confirmation,
+        required_terms: [title, ...(due ? [due] : []), ...(reminderRequested && reminder ? [reminder] : [])],
+      });
     }
 
     case "reschedule_reminder": {
       const actionId = String(input.action_id ?? "");
       const sendDate = String(input.send_date ?? "");
-      if (!isIsoDate(sendDate)) return "FAILED — send_date must be a real ISO calendar date.";
+      if (!isIsoDate(sendDate)) return toolFailure("I need a valid date for that reminder.", true);
 
       const items = await listSavedItems(student.id);
       const action = items.flatMap((item) => item.actions).find((row) => row.id === actionId);
       if (!action) return badActionId(actionId, items);
-      if (!action.due_date) return "FAILED — that action has no deadline, so it has no reminder.";
+      if (!action.due_date) return toolFailure("That task has no deadline, so there isn’t a reminder to move.");
 
       const planned = localInstant(sendDate, "18:00", student.timezone);
       const due = localInstant(action.due_date, action.due_time ?? "20:00", student.timezone);
       const now = new Date();
       if (!planned || !due || planned.getTime() <= now.getTime()) {
-        return "FAILED — that reminder time is not in the future.";
+        return toolFailure("That reminder time has already passed. When should I move it to?", true);
       }
       if (planned.getTime() >= due.getTime()) {
-        return "FAILED — that would be after the deadline, so the reminder was not changed.";
+        return toolFailure("That would be after the deadline. What earlier day should I use?", true);
       }
 
       const changed = await rescheduleActionReminder({
@@ -393,9 +450,17 @@ export async function runTool(
         actionId,
         plannedSendAt: planned.toISOString(),
       });
+      const when = naturalInstant(planned.toISOString(), student.timezone);
       return changed
-        ? JSON.stringify({ rescheduled: true, send_date: sendDate, local_time: "18:00" })
-        : "FAILED — there is no pending reminder for that action; it may be cancelled, delivered, or already sending.";
+        ? JSON.stringify({
+            ok: true,
+            kind: "reminder",
+            rescheduled: true,
+            send_at: planned.toISOString(),
+            confirmation: `Done — I’ll remind you ${when}.`,
+            required_terms: [when],
+          })
+        : toolFailure("That reminder is no longer pending, so I couldn’t move it.");
     }
 
     case "cancel_reminder": {
@@ -407,8 +472,14 @@ export async function runTool(
 
       const cancelled = await cancelActionReminder(student.id, actionId);
       return cancelled
-        ? JSON.stringify({ cancelled: true })
-        : "FAILED — there is no pending reminder for that action; it may already be cancelled, delivered, or sending.";
+        ? JSON.stringify({
+            ok: true,
+            kind: "reminder",
+            cancelled: true,
+            confirmation: "Done — reminder cancelled.",
+            required_terms: ["cancelled"],
+          })
+        : toolFailure("That reminder is no longer pending, so there’s nothing to cancel.");
     }
 
     default:

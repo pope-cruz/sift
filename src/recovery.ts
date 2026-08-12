@@ -1,4 +1,4 @@
-export const TROUBLE = "Hmm, I had trouble sifting that — mind sending it again?";
+export const TROUBLE = "I couldn’t finish that one. Send it once more?";
 
 /** Best-effort recovery: a database failure can still produce a useful reply;
  * a provider outage is swallowed so the long-running worker stays alive. */

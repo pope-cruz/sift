@@ -110,7 +110,7 @@ test("a sample exam with only a filename year creates no actions", () => {
   assert.equal(result.decisions[0]!.outcome, "evidence_only");
   // The 2018 survives as descriptive metadata even though it produced nothing.
   assert.match(result.item.extractedText, /2018/);
-  assert.match(result.confirmation, /didn't find any dates to track/);
+  assert.equal(result.confirmation, "Got it — Sample Midterm 2018 is saved as the exam info. No deadlines in it.");
 });
 
 test("a model recommending an action cannot override the filename rule", () => {
@@ -161,7 +161,7 @@ test("an explicit due date in the body creates one supported action with provena
   // The row and the reply use the short label; the excerpt stays provenance, or
   // the student gets a sentence of someone else's document mid-sentence.
   assert.equal(live[0]!.description, "Problem Set 1 due");
-  assert.match(result.confirmation, /tracking Problem Set 1 due on Fri, Sep 18\./);
+  assert.equal(result.confirmation, "Got it. Problem Set 1 is due Fri, Sep 18.");
 });
 
 // ---------------------------------------------------------------------------
@@ -188,7 +188,7 @@ test("a resolvable date read off the filename creates zero actions", () => {
   const result = aggregate(subject, context({ filename: "notes-2026-09-18.pdf" }));
 
   assert.equal(result.actions.length, 0);
-  assert.match(result.confirmation, /didn't find any dates to track/);
+  assert.equal(result.confirmation, "Got it — Reading is saved as reference material. No deadlines in it.");
 });
 
 // ---------------------------------------------------------------------------
@@ -223,7 +223,8 @@ test("a past syllabus is saved with its dates as reference, never as open work",
   assert.ok(result.actions.every((action) => action.status === "reference"));
   // Reference rows carry no reminder instant — this is what keeps the cron quiet.
   assert.ok(result.actions.every((action) => action.remindAt === null));
-  assert.match(result.confirmation, /already passed/);
+  assert.match(result.confirmation, /Those dates are all past/);
+  assert.match(result.confirmation, /Is this reference material, or should the dates be current\?/);
 });
 
 // ---------------------------------------------------------------------------
@@ -251,7 +252,7 @@ test("an unresolved date is kept as evidence and never invented into an action",
   const evidence = JSON.parse(result.item.extractedText);
   assert.equal(evidence.candidates[0].normalized_date, null);
   assert.equal(evidence.candidates[0].original_text, "March 30");
-  assert.match(result.confirmation, /couldn't work out what "March 30" refers to/);
+  assert.equal(result.confirmation, "Got it — Lab handout. What year does “March 30” refer to?");
 });
 
 // ---------------------------------------------------------------------------
@@ -336,7 +337,7 @@ test("an event flyer stays an event and creates a dated action when the image sa
   assert.notEqual(result.item.type, "place");
   assert.equal(openActions(result).length, 1);
   assert.equal(openActions(result)[0]!.dueDate, "2026-09-22");
-  assert.match(result.confirmation, /Saved this event/);
+  assert.equal(result.confirmation, "Got it. Problem Set 1 is on Tue, Sep 22.");
 });
 
 test("an event flyer with no visible date is saved with no action", () => {
@@ -520,9 +521,9 @@ test("an artifact is always saved, even when it yields nothing actionable", () =
   assert.ok(result.item.title);
   assert.ok(result.item.type);
   assert.equal(result.actions.length, 0);
-  assert.ok(result.confirmation.startsWith("Saved"));
+  assert.ok(result.confirmation.startsWith("Got it"));
   // An uncategorized artifact gets no "as ___" clause rather than "as this".
-  assert.equal(result.confirmation, "Saved Mystery. I didn't find any dates to track.");
+  assert.equal(result.confirmation, "Got it — Mystery is saved. No deadlines in it.");
 });
 
 test("no confirmation promises a reminder unless an open action backs it", () => {
@@ -610,7 +611,41 @@ test("a missing title stays omitted instead of becoming a filename fact", () => 
   );
 
   assert.equal(result.item.title, null);
-  assert.match(result.confirmation, /Saved the attachment\./);
+  assert.equal(result.confirmation, "Got it — the attachment is saved. No deadlines in it.");
+});
+
+test("a syllabus confirmation selects the nearest deadlines and compresses the rest", () => {
+  const result = aggregate(
+    analysis({
+      title: "CS 4414 syllabus",
+      purpose: "syllabus",
+      date_candidates: [
+        candidate({ label: "Reading quiz due", normalized_date: "2026-08-14" }),
+        candidate({ label: "Project 1 due", normalized_date: "2026-08-17" }),
+        candidate({ label: "Project 2 due", normalized_date: "2026-08-28" }),
+      ],
+    }),
+    context(),
+  );
+
+  assert.equal(
+    result.confirmation,
+    "Got it. Reading quiz is due Fri, Aug 14, then Project 1 is due Mon, Aug 17. I saved the other 1 deadline too.",
+  );
+  assert.doesNotMatch(result.confirmation, /Project 2/);
+});
+
+test("ingest asks only the clarification needed for an unresolved deadline", () => {
+  const result = aggregate(
+    analysis({
+      title: "Application brief",
+      purpose: "assignment_instructions",
+      date_candidates: [candidate({ normalized_date: null, original_text: "September 18" })],
+    }),
+    context(),
+  );
+  assert.equal(result.confirmation, "Got it — Application brief. What year does “September 18” refer to?");
+  assert.equal((result.confirmation.match(/\?/g) ?? []).length, 1);
 });
 
 test("weak filename adjectives cannot override the content classification", () => {

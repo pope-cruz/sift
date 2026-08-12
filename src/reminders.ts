@@ -54,11 +54,13 @@ function duePhrase(claim: ReminderClaim, now: Date): string {
 
 /** Plain, concise copy whose subject and date both come from the claimed row. */
 export function composeReminder(claim: ReminderClaim, now: Date = new Date()): string {
-  const subject = subjectFor(claim);
-  const preparation = /\b(exam|midterm|final|meeting|interview|presentation)\b/i.test(subject)
-    ? "This is a good time to get ready."
-    : "This is a good time to finish it.";
-  return `Your ${subject} is due ${duePhrase(claim, now)}. ${preparation}`;
+  const rawSubject = subjectFor(claim);
+  const subject = rawSubject.charAt(0).toLocaleUpperCase("en-US") + rawSubject.slice(1);
+  const event = /\b(exam|midterm|final|meeting|interview|presentation)\b/i.test(subject);
+  const deadline = event
+    ? `${subject} is ${duePhrase(claim, now)}.`
+    : `${subject} is due ${duePhrase(claim, now)}.`;
+  return `${deadline} ${event ? "Time to get ready." : "Good time to finish it."}`;
 }
 
 export type ReminderBatchResult = {

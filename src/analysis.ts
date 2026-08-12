@@ -196,6 +196,40 @@ function describe(candidate: DateCandidate): string {
   return label || candidate.original_text.trim();
 }
 
+function conversationalName(candidate: DateCandidate): string {
+  return describe(candidate).replace(/\s+(?:is\s+)?due\s*$/i, "").trim() || describe(candidate);
+}
+
+function conversationalDate(decision: Decision, timezone: string): string {
+  const date = friendly(decision.candidate.normalized_date!, timezone);
+  if (!decision.candidate.normalized_time) return date;
+  const time = new Intl.DateTimeFormat("en-US", {
+    timeZone: "UTC",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(`2000-01-01T${decision.candidate.normalized_time}:00Z`));
+  return `${date} at ${time}`;
+}
+
+function deadlineFact(decision: Decision, timezone: string): string {
+  const name = conversationalName(decision.candidate);
+  const when = conversationalDate(decision, timezone);
+  return decision.candidate.role === "scheduled_event"
+    ? `${name} is on ${when}`
+    : `${name} is due ${when}`;
+}
+
+function reminderTime(iso: string, timezone: string): string {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(iso));
+}
+
 /**
  * The model can report one real deadline twice — a syllabus that lists the same
  * due date in a table and again in an announcements feed reads as two
@@ -424,35 +458,40 @@ function confirm(input: {
     const where = analysis.place.location
       ? `${analysis.place.name} (${analysis.place.location})`
       : analysis.place.name;
-    return (
-      `Saved ${where} as a study spot. ${analysis.place.caption} ` +
-      `I'll bring it up when you're deciding where to work.`
-    );
+    return `Got it — ${where} is a study spot. ${analysis.place.caption}`;
   }
 
   if (open.length > 0) {
     const first = open[0]!;
-    const when = friendly(first.candidate.normalized_date!, timezone);
-    const lead =
-      purpose === "event_flyer"
-        ? `Saved this event — ${displayTitle}.`
-        : `Saved ${displayTitle}.`;
-
-    const found =
-      open.length === 1
-        ? `I'm tracking ${describe(first.candidate)} on ${when}.`
-        : `I found ${count(open.length, "supported date", "supported dates")}; the first is ` +
-          `${describe(first.candidate)} on ${when}.`;
+    const second = open[1];
+    const important = second
+      ? `${deadlineFact(first, timezone)}, then ${deadlineFact(second, timezone)}.`
+      : `${deadlineFact(first, timezone)}.`;
+    const remaining = open.length - (second ? 2 : 1);
+    const rest = remaining > 0
+      ? ` I saved the other ${count(remaining, "deadline", "deadlines")} too.`
+      : purpose === "syllabus"
+        ? " I saved the rest of the syllabus too."
+        : "";
 
     const parked =
       reference.length > 0
-        ? ` ${count(reference.length, "other date has", "other dates have")} already passed, ` +
-          `so I've kept ${reference.length === 1 ? "it" : "those"} as reference.`
+        ? ` ${count(reference.length, "other date is", "other dates are")} already past.`
         : "";
 
-    const nudge = open.length === 1 ? "I'll nudge you beforehand." : "I'll nudge you before each one.";
+    const reminder = analysis.user_intent === "create_reminder" && first.candidate.normalized_date
+      ? remindAtFor(
+          first.candidate.normalized_date,
+          timezone,
+          new Date(),
+          first.candidate.normalized_time,
+        )
+      : null;
+    const reminderConfirmation = reminder
+      ? ` I’ll remind you ${reminderTime(reminder, timezone)}.`
+      : "";
 
-    return `${lead} ${found}${parked} ${nudge}`;
+    return `Got it. ${important}${rest}${parked}${reminderConfirmation}`;
   }
 
   // Nothing live. Say which kind of nothing — these want different follow-ups,
@@ -466,10 +505,7 @@ function confirm(input: {
         ? `on ${friendly(first, timezone, withYear)}`
         : `between ${friendly(first, timezone, withYear)} and ${friendly(last, timezone, withYear)}`;
 
-    return (
-      `Saved ${displayTitle}. Every date I found lands ${span}, which has already passed. ` +
-      `Want me to keep this as reference only, or are those dates supposed to be current?`
-    );
+    return `Got it — ${displayTitle}. Those dates are all past (${span}). Is this reference material, or should the dates be current?`;
   }
 
   const unresolved = decisions.filter(
@@ -481,15 +517,11 @@ function confirm(input: {
         decision.candidate.role === "ambiguous"),
   );
   if (unresolved.length > 0) {
-    return (
-      `Saved ${displayTitle} for later, but I couldn't work out what ` +
-      `"${unresolved[0]!.candidate.original_text}" refers to — no year I could pin it to. ` +
-      `Tell me the date and I'll track it.`
-    );
+    return `Got it — ${displayTitle}. What year does “${unresolved[0]!.candidate.original_text}” refer to?`;
   }
 
   if (purpose === "practice_material") {
-    return `Saved ${displayTitle} as practice material. I didn't find an upcoming exam date.`;
+    return `Got it — ${displayTitle} is saved as practice material. No upcoming exam date in it.`;
   }
 
   const label = PURPOSE_LABEL[purpose];
@@ -497,6 +529,6 @@ function confirm(input: {
     analysis.topics.length > 0
       ? ` I pulled ${count(analysis.topics.length, "topic", "topics")}.`
       : "";
-  const saved = label ? `Saved ${displayTitle} as ${label}.` : `Saved ${displayTitle}.`;
-  return `${saved}${topics} I didn't find any dates to track.`;
+  const saved = label ? `Got it — ${displayTitle} is saved as ${label}.` : `Got it — ${displayTitle} is saved.`;
+  return `${saved}${topics} No deadlines in it.`;
 }

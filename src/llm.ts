@@ -7,6 +7,11 @@ import { safeDiagnostic } from "./diagnostics.ts";
 import { env } from "./env.ts";
 import { ArtifactAnalysisBatch } from "./schemas.ts";
 import type { ArtifactAnalysis } from "./schemas.ts";
+import {
+  confirmationFallback,
+  RESPONSE_POLICY,
+  type ReplyAttempt,
+} from "./response-policy.ts";
 import { withStructuredOutputRetry } from "./structured-output.ts";
 
 // Two models, split by what the call actually needs.
@@ -83,7 +88,6 @@ Replying:
 - Every message you send goes through the reply tool. A turn is not over until you have
   called it — work you did without a reply is invisible to the student.
 - Plain text only. iMessage renders no markdown, so never use headers, bullets, or asterisks.
-- Two to five sentences. You are a text message, not a document.
 - Talk to the student, not about them. Say "you", never "the student".
 - EVIDENCE is assembled deterministically from this student's database rows. Treat it as the
   only source of saved facts. Stable ids and source labels are provenance for reasoning; never
@@ -91,18 +95,22 @@ Replying:
 - REQUEST_GROUNDING is authoritative. If it says not_found, say nothing relevant was found.
   If it says ambiguous, name the plausible choices or ask one concise clarification question.
 - For plans, use only UPCOMING_DEADLINES_NEXT_14_DAYS and undated open actions as work to
-  schedule. Preserve exact titles and ISO dates, prioritize chronologically, and do not invent
+  schedule. Preserve exact titles and dates, but render ISO evidence as natural dates in the
+  student's timezone. Prioritize chronologically, and do not invent
   availability, priorities, events, or a "light day" unless CURRENT.supported_lighter_day names
   one. When it does, preserve that day in the plan.
 - When a useful SAVED_PLACES entry exists, mention it naturally in a plan. Never invent a place,
-  and do not force a place into unrelated retrieval or chitchat.
+  and use it only when it improves the recommendation — never to display memory.
 - Saved item open_dates outside the 14-day planning section may answer an exact retrieval
   question, but they must not distort a weekly plan.
 - When they are just being friendly, be friendly back and stop there. Don't recap what you
   have, and don't push them to act on something they didn't ask about.
 - Never tell the student something changed unless a tool call confirmed it. If a tool
   reports a failure, say what went wrong instead of claiming success.
-- Don't end every message with a question. Ask when you genuinely need an answer.
+- After a successful mutation, use the tool result's confirmation facts and stop. Do not recap
+  unrelated deadlines, places, or earlier messages.
+
+${RESPONSE_POLICY}
 
 Dates:
 - A date that has already passed is never a live deadline. If a student sends a file whose
@@ -146,10 +154,11 @@ export async function respond(input: {
   timezone: string;
   tools: Anthropic.Tool[];
   runTool: (name: string, args: Record<string, unknown>) => Promise<string>;
-  validateReply?: (text: string) => string | null;
+  validateReply?: (text: string, attempt: ReplyAttempt) => string | null;
   fallbackReply?: string;
 }): Promise<string> {
   const messages: Anthropic.MessageParam[] = [];
+  const attempt: ReplyAttempt = { completedTools: [] };
 
   for (const turn of input.history) {
     const role = turn.direction === "outbound" ? "assistant" : "user";
@@ -194,7 +203,7 @@ export async function respond(input: {
     if (actions.length === 0 && reply) {
       const text = String((reply.input as { text?: unknown }).text ?? "").trim();
       if (!text) break;
-      const issue = input.validateReply?.(text) ?? null;
+      const issue = input.validateReply?.(text, attempt) ?? null;
       if (!issue) return text;
 
       // The reply tool is the send boundary. Reject unsupported prose here and
@@ -228,11 +237,13 @@ export async function respond(input: {
           tool: use.name,
           error: safeDiagnostic(error),
         });
-        content =
-          "Error: the stored-data operation failed. Tell the student you couldn't complete " +
-          "that change and ask them to try again; do not expose internal details.";
+        content = JSON.stringify({
+          ok: false,
+          user_message: "I couldn’t finish that change. Try it once more.",
+        });
       }
       results.push({ type: "tool_result", tool_use_id: use.id, content });
+      attempt.completedTools.push({ name: use.name, result: content });
     }
 
     // A reply issued alongside an action was written before the action's
@@ -251,7 +262,7 @@ export async function respond(input: {
     messages.push({ role: "user", content: results });
   }
 
-  return input.fallbackReply ?? "Hmm, I got tangled up on that one — mind saying it another way?";
+  return confirmationFallback(attempt) ?? input.fallbackReply ?? "I got tangled up on that. Say it once more?";
 }
 
 /**

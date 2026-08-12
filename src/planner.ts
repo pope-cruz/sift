@@ -6,6 +6,14 @@
 // data, and the prompt budget are all reproducible in tests.
 
 import { friendly, isIsoDate } from "./dates.ts";
+import {
+  mutationTools,
+  needsClarification,
+  parsedToolResult,
+  validateConversationalEconomy,
+  type ReplyAttempt,
+  type ResponseMode,
+} from "./response-policy.ts";
 
 export type ContextStudent = {
   id: string;
@@ -557,10 +565,10 @@ export function renderContext(context: StudentContext, maxCharacters = 8_000): s
   const request = section("REQUEST_GROUNDING", [jsonLine({
     ...context.request,
     rule: context.request.matchStatus === "not_found"
-      ? "No stored item matched. Say so; do not infer one from conversation."
+      ? "No evidence matched. Say so directly; do not infer one from conversation."
       : context.request.matchStatus === "ambiguous"
-        ? "Several stored items are equally plausible. Name the options or ask one concise clarification."
-        : "Use only the cited stored records.",
+        ? "Several items are equally plausible. Name the options and ask one concise clarification."
+        : "Use only the cited evidence and answer without narrating how it was found.",
   })], 700);
   const deadlines = section(
     "UPCOMING_DEADLINES_NEXT_14_DAYS (chronological; authoritative for plans)",
@@ -575,7 +583,7 @@ export function renderContext(context: StudentContext, maxCharacters = 8_000): s
     400,
   );
   const places = section(
-    "SAVED_PLACES",
+    "RELEVANT_PLACES",
     context.places.length
       ? context.places.map((item) => jsonLine({
           item_id: item.itemId,
@@ -588,7 +596,7 @@ export function renderContext(context: StudentContext, maxCharacters = 8_000): s
     700,
   );
   const items = section(
-    "RELEVANT_OR_RECENT_SAVED_ITEMS",
+    "RELEVANT_OR_RECENT_CONTEXT",
     context.savedItems.length
       ? context.savedItems.map((item) => jsonLine({
           item_id: item.itemId,
@@ -639,6 +647,19 @@ function actionName(action: ContextAction): string {
   return description || action.itemTitle || action.description;
 }
 
+function isCalendarCommitment(action: ContextAction): boolean {
+  return /\b(?:meeting|appointment|office hours?|class|lecture|seminar|event)\b/i.test(actionName(action));
+}
+
+function requiredPlanActions(context: StudentContext): ContextAction[] {
+  const first = context.upcomingDeadlines[0];
+  if (!first) return [];
+  const nextWork = context.upcomingDeadlines
+    .slice(1)
+    .find((action) => !isCalendarCommitment(action));
+  return nextWork ? [first, nextWork] : [first];
+}
+
 function itemName(item: ContextItem): string {
   return item.place?.name ?? item.title ?? "an untitled saved item";
 }
@@ -650,14 +671,104 @@ function sentenceCount(answer: string): number {
     .filter(Boolean).length;
 }
 
+function recentAssistantText(context: StudentContext): string | null {
+  return [...context.messages].reverse().find((message) => message.direction === "outbound")?.content ?? null;
+}
+
+const NEXT_FOLLOW_UP = /\b(?:after that|what else|anything else|next one|what(?:'s| is) next|then what)\b/i;
+
+function uniqueActions(actions: ContextAction[]): ContextAction[] {
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    if (seen.has(action.actionId)) return false;
+    seen.add(action.actionId);
+    return true;
+  });
+}
+
+function retrievalActions(context: StudentContext, candidates: ContextItem[]): ContextAction[] {
+  let actions = uniqueActions([
+    ...candidates.flatMap((item) => item.actions),
+    ...context.upcomingDeadlines,
+  ]).filter((action): action is ContextAction & { dueDate: string } => action.dueDate !== null);
+
+  if (NEXT_FOLLOW_UP.test(context.question)) {
+    const prior = recentAssistantText(context) ?? "";
+    const unseen = actions.filter((action) =>
+      !containsAnswerKey(prior, actionName(action)) &&
+      !containsAnswerKey(prior, action.dueDate!),
+    );
+    if (unseen.length > 0) actions = unseen;
+  }
+  return actions;
+}
+
+function responseMode(context: StudentContext, attempt?: ReplyAttempt): ResponseMode {
+  const mutations = mutationTools(attempt);
+  if (needsClarification(attempt)) return "clarify";
+  if (mutations.length > 0) {
+    const result = parsedToolResult(mutations.at(-1)!.result);
+    return result?.kind === "reminder" ? "reminder" : "mutation";
+  }
+  if (context.request.matchStatus === "ambiguous") return "clarify";
+  if (context.request.intent === "plan") {
+    return context.upcomingDeadlines.length || context.undatedOpenActions.length ? "plan" : "answer";
+  }
+  if (context.request.intent === "retrieve") return "answer";
+  return "chat";
+}
+
+function mutationContract(answer: string, attempt?: ReplyAttempt): string | null {
+  const last = mutationTools(attempt).at(-1);
+  if (!last) return null;
+  const result = parsedToolResult(last.result);
+  if (result?.ok !== true) {
+    if (/\b(?:done|added|saved|changed|moved|rescheduled|cancelled|tracking)\b/i.test(answer)) {
+      return "The tool did not complete the change; do not claim success.";
+    }
+    const userMessage = typeof result?.user_message === "string" ? result.user_message : null;
+    if (userMessage) {
+      const keyTerms = userMessage
+        .split(/\s+/)
+        .map((word) => word.replace(/[^a-z0-9]/gi, ""))
+        .filter((word) => word.length >= 6);
+      if (keyTerms.length > 0 && !keyTerms.some((term) => containsAnswerKey(answer, term))) {
+        return `Explain the failed change using the tool result: ${userMessage}`;
+      }
+    }
+    return null;
+  }
+  const terms = Array.isArray(result.required_terms)
+    ? result.required_terms.filter((term): term is string => typeof term === "string" && term.length > 0)
+    : [];
+  const missing = terms.find((term) => !containsAnswerKey(answer, term));
+  return missing ? `The confirmation must preserve the completed change: ${missing}.` : null;
+}
+
 /**
  * Validate the model's prose against facts that cannot be optional. Prompting
  * alone is not a guarantee: this contract is the last gate before iMessage.
  */
-export function validateReply(context: StudentContext, answer: string): string | null {
+export function validateReply(
+  context: StudentContext,
+  answer: string,
+  attempt?: ReplyAttempt,
+): string | null {
   const trimmed = answer.trim();
   if (!trimmed) return "The reply was empty.";
   if (/^\s*(#|\*|- )/m.test(trimmed)) return "Use plain iMessage text, not Markdown.";
+
+  const clarificationRequired = needsClarification(attempt) ||
+    (mutationTools(attempt).length === 0 && context.request.matchStatus === "ambiguous");
+  const economyIssue = validateConversationalEconomy({
+    text: trimmed,
+    mode: responseMode(context, attempt),
+    clarificationRequired,
+    recentAssistantText: recentAssistantText(context),
+  });
+  if (economyIssue) return economyIssue;
+  const mutationIssue = mutationContract(trimmed, attempt);
+  if (mutationIssue) return mutationIssue;
 
   const internalIds = [
     ...context.savedItems.map((item) => item.itemId),
@@ -667,40 +778,56 @@ export function validateReply(context: StudentContext, answer: string): string |
 
   if (context.request.intent === "plan") {
     const sentences = sentenceCount(trimmed);
-    if (sentences < 2 || sentences > 5) return "A weekly plan must be two to five concise sentences.";
+    if (sentences > 4) return "A plan must be no more than four concise sentences.";
 
-    const first = context.upcomingDeadlines[0];
-    if (first) {
-      if (!containsAnswerKey(trimmed, actionName(first))) {
-        return `The plan must name the first chronological deadline: ${actionName(first)}.`;
+    const required = requiredPlanActions(context);
+    for (const action of required) {
+      if (!containsAnswerKey(trimmed, actionName(action))) {
+        return `The plan must name the selected priority: ${actionName(action)}.`;
       }
       const dateForms = [
-        first.dueDate,
-        first.dueDate ? friendly(first.dueDate, context.student.timezone) : null,
-        first.dueDate ? friendly(first.dueDate, context.student.timezone, { year: true }) : null,
+        action.dueDate,
+        action.dueDate ? friendly(action.dueDate, context.student.timezone) : null,
+        action.dueDate ? friendly(action.dueDate, context.student.timezone, { year: true }) : null,
       ].filter((value): value is string => value !== null);
       if (!dateForms.some((value) => containsAnswerKey(trimmed, value))) {
-        return `The plan must preserve the date ${first.dueDate}.`;
+        return `The plan must preserve the date ${action.dueDate}.`;
       }
     }
 
-    const preferredPlace = context.places[0];
-    if (preferredPlace && !containsAnswerKey(trimmed, itemName(preferredPlace))) {
-      return `The plan must naturally name the selected saved place: ${itemName(preferredPlace)}.`;
+    // A plan may selectively mention later work, but every selected deadline
+    // must carry its own correct date. Validating only the first allowed a
+    // fluent plan to attach Thursday to a Saturday meeting.
+    for (const action of context.upcomingDeadlines.slice(1)) {
+      if (!action.dueDate || !containsAnswerKey(trimmed, actionName(action))) continue;
+      const dateForms = [
+        action.dueDate,
+        friendly(action.dueDate, context.student.timezone),
+        friendly(action.dueDate, context.student.timezone, { year: true }),
+      ];
+      if (!dateForms.some((value) => containsAnswerKey(trimmed, value))) {
+        return `The plan mentions ${actionName(action)}, so it must preserve the date ${action.dueDate}.`;
+      }
     }
+
     if (context.lighterDay && !containsAnswerKey(trimmed, context.lighterDay.day)) {
-      return `The stored schedule supports ${context.lighterDay.day} as the lighter day; preserve it.`;
+      return `The schedule supports ${context.lighterDay.day} as the lighter day; use it in the recommendation.`;
     }
   }
 
   if (
     context.request.matchStatus === "not_found" &&
-    !/\b(couldn.t find|didn.t find|don.t have|do not have|nothing (relevant|saved)|not saved)\b/i.test(trimmed)
+    context.upcomingDeadlines.length === 0 &&
+    !/\b(couldn.t find|didn.t find|don.t have|do not have|nothing (?:relevant|saved|matching|due)|not saved)\b/i.test(trimmed)
   ) {
     return "Say plainly that no matching saved record was found.";
   }
 
-  if (context.request.matchStatus === "ambiguous" && !trimmed.includes("?")) {
+  if (
+    context.request.matchStatus === "ambiguous" &&
+    mutationTools(attempt).length === 0 &&
+    !trimmed.includes("?")
+  ) {
     return "Ask one concise clarification question for the ambiguous match.";
   }
 
@@ -708,15 +835,12 @@ export function validateReply(context: StudentContext, answer: string): string |
     const candidates = context.request.candidateItemIds
       .map((id) => context.savedItems.find((item) => item.itemId === id))
       .filter((item): item is ContextItem => item !== undefined);
-    const asksForDeadline = /\b(due|deadline|coming up|upcoming work)\b/i.test(context.question);
+    const asksForDeadline = /\b(due|deadline|coming up|upcoming work|after that|what else|next)\b/i.test(context.question);
 
     if (asksForDeadline) {
-      const candidateActions = candidates
-        .flatMap((item) => item.actions)
-        .filter((action): action is ContextAction & { dueDate: string } => action.dueDate !== null);
-      const target = candidateActions[0] ?? context.upcomingDeadlines[0];
+      const target = retrievalActions(context, candidates)[0];
       if (!target?.dueDate) {
-        if (!/\b(don.t have|do not have|no open|no saved|nothing due|without a due date|has no .*due date)\b/i.test(trimmed)) {
+        if (!/\b(don.t have|do not have|doesn.t have|does not have|no open|no saved|nothing due|without a due date|has no .*due date)\b/i.test(trimmed)) {
           return "Say plainly that no supported open due date was found.";
         }
       } else {
@@ -742,71 +866,81 @@ export function validateReply(context: StudentContext, answer: string): string |
 
 function planFallback(context: StudentContext): string {
   const first = context.upcomingDeadlines[0];
-  const second = context.upcomingDeadlines[1];
+  const second = first
+    ? context.upcomingDeadlines.slice(1).find((action) => !isCalendarCommitment(action))
+      ?? context.upcomingDeadlines[1]
+    : undefined;
   const place = context.places[0];
 
   let opening: string;
   if (first?.dueDate) {
-    opening = `Prioritize ${actionName(first)}, due ${friendly(first.dueDate, context.student.timezone)}.`;
+    opening = `I’d start with ${actionName(first)}, due ${friendly(first.dueDate, context.student.timezone)}.`;
   } else if (context.undatedOpenActions[0]) {
-    opening = `Start with ${actionName(context.undatedOpenActions[0])}; it is open but has no saved due date.`;
+    opening = `I’d start with ${actionName(context.undatedOpenActions[0])}; it has no date yet, so clear it before the dated work.`;
   } else {
-    opening = "I don't have any open deadlines in the next 14 days to build the week around.";
+    return "Nothing urgent in the next two weeks, so I wouldn’t force a plan.";
   }
 
-  let closing: string;
+  let closing: string | null = null;
   if (second?.dueDate) {
-    closing = `Then work toward ${actionName(second)}, due ${friendly(second.dueDate, context.student.timezone)}`;
-    closing += place ? `, with a study session at ${itemName(place)}.` : ".";
+    closing = `Then move to ${actionName(second)}, due ${friendly(second.dueDate, context.student.timezone)}`;
+    closing += place ? `; ${itemName(place)} fits the longer session.` : ".";
   } else if (place) {
-    closing = `Use ${itemName(place)} for a focused study session when it fits your week.`;
-  } else {
-    closing = "I don't have enough saved schedule detail to invent a lighter day or a study location.";
+    closing = `${itemName(place)} is a good fit for the longer work block.`;
   }
 
   const schedule = context.lighterDay
-    ? `${context.lighterDay.day} is your lightest stored day, with ${context.lighterDay.storedCommitments} saved commitments.`
+    ? `${context.lighterDay.day} is lighter, so use it for the focused block.`
     : null;
   return [opening, schedule, closing].filter(Boolean).join(" ");
 }
 
 function retrieveFallback(context: StudentContext): string {
-  if (context.request.matchStatus === "not_found") {
-    return "I couldn't find anything saved that matches that. If you meant another title or topic, tell me what to look for.";
+  if (context.request.matchStatus === "not_found" && context.upcomingDeadlines.length === 0) {
+    return /\b(due|deadline|coming up|upcoming work|what do i have)\b/i.test(context.question)
+      ? "Nothing due in the next two weeks."
+      : "Nothing matching that yet.";
   }
 
   const candidates = context.request.candidateItemIds
     .map((id) => context.savedItems.find((item) => item.itemId === id))
     .filter((item): item is ContextItem => item !== undefined);
-  const asksForDeadline = /\b(due|deadline|coming up|upcoming work)\b/i.test(context.question);
+  const asksForDeadline = /\b(due|deadline|coming up|upcoming work|after that|what else|next)\b/i.test(context.question);
   if (context.request.matchStatus === "ambiguous") {
     const names = candidates.map(itemName).join(" or ");
-    return `I found ${names || "more than one plausible saved item"}. Which one did you mean?`;
+    return `${names || "More than one thing fits"} — which one do you mean?`;
   }
 
-  const dated = candidates.flatMap((item) => item.actions).filter((action) => action.dueDate !== null);
+  const dated = retrievalActions(context, candidates);
   if (dated.length > 0) {
-    const facts = dated.slice(0, 3).map((action) =>
-      `${actionName(action)} is due ${friendly(action.dueDate!, context.student.timezone)}`,
+    const selected = dated.slice(0, 3);
+    if (selected.length === 1) {
+      const action = selected[0]!;
+      return `${actionName(action)} is due ${friendly(action.dueDate!, context.student.timezone)}.`;
+    }
+    const facts = selected.map((action) =>
+      `${actionName(action)} ${friendly(action.dueDate!, context.student.timezone)}`,
     );
-    return `${facts.join("; ")}. Those dates come from your open saved actions.`;
+    const lead = `${selected.length} coming up`;
+    return `${lead}: ${facts.slice(0, -1).join(", ")}, then ${facts.at(-1)}.`;
   }
 
   if (asksForDeadline && candidates.length > 0) {
-    return `I found ${candidates.map(itemName).join(", ")}, but there is no open saved due date attached. I won't invent one.`;
+    const names = candidates.map(itemName).join(" and ");
+    return `${names} ${candidates.length === 1 ? "doesn’t" : "don’t"} have a due date yet.`;
   }
 
   if (candidates.length > 1) {
-    return `I found ${candidates.map(itemName).join(", ")} in what you've saved. I don't have an open date attached to those items.`;
+    return `${candidates.length} match: ${candidates.map(itemName).join(", ")}.`;
   }
   const item = candidates[0];
-  if (item) return `You saved ${itemName(item)}. ${item.summary}`;
+  if (item) return `${itemName(item)}: ${item.summary}`;
 
   if (context.upcomingDeadlines.length > 0) {
     const first = context.upcomingDeadlines[0]!;
-    return `${actionName(first)} is due ${friendly(first.dueDate!, context.student.timezone)}. That is your next open deadline.`;
+    return `First up: ${actionName(first)}, due ${friendly(first.dueDate!, context.student.timezone)}.`;
   }
-  return "I don't have any open deadlines in the next 14 days. I won't invent work that isn't in your saved records.";
+  return "Nothing due in the next two weeks.";
 }
 
 /** A grounded last resort if the model repeatedly violates the reply contract. */

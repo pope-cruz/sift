@@ -119,7 +119,7 @@ export async function handleTurn(space: Space, message: Message, student: Studen
         timezone: active.timezone,
         tools: TOOLS,
         runTool: (name, args) => runTool(active, name, args),
-        validateReply: (text) => validateReply(context, text),
+        validateReply: (text, attempt) => validateReply(context, text, attempt),
         fallbackReply: fallbackReply(context),
       }),
     );
