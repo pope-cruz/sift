@@ -3,7 +3,7 @@ import { test } from "node:test";
 
 import type { Message } from "spectrum-ts";
 
-import { aggregate, effectivePurpose, type AdmissionContext } from "./analysis.ts";
+import { aggregate, type AdmissionContext } from "./analysis.ts";
 import { attachmentsOf, parts, summarize, textOf } from "./content.ts";
 import { uniqueAttachments } from "./input.ts";
 import { reconcileMetadata } from "./metadata.ts";
@@ -218,10 +218,13 @@ test("missing title, author, category, date, and source remain omitted", () => {
 });
 
 test("ambiguous sample/practice/draft/final/old filename words stay weak context", () => {
+  // Asserted through aggregate rather than effectivePurpose: the latter no
+  // longer takes a filename at all, which is the stronger form of this
+  // guarantee, but it leaves aggregate as the only place the claim is testable.
   for (const adjective of ["sample", "practice", "draft", "final", "old"]) {
     const subject = artifact({ purpose: "exam_information" });
     assert.equal(
-      effectivePurpose(subject, `${adjective} midterm.pdf`),
+      aggregate(subject, { ...CONTEXT, filename: `${adjective} midterm.pdf` }).item.type,
       "exam_information",
       adjective,
     );
