@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#F6F4EE">
+  <title>Interactive demo · Sift</title>
+  <meta name="description" content="Try Sift with real model calls and temporary 24-hour memory.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/demo/demo.css?v=1">
+  <script type="module" src="/demo/demo.js?v=3"></script>
+</head>
+<body>
+  <a class="skip" href="#composer">Skip to message composer</a>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Sift home"><span class="brand-dot"></span>Sift</a>
+      <div class="session-meta">
+        <span class="status-dot" id="connection-dot"></span>
+        <span id="expiry-label">24-hour demo</span>
+        <span aria-hidden="true">·</span>
+        <span id="quota-label">12 turns left</span>
+        <button class="text-button" id="reset-button" type="button">Start over</button>
+      </div>
+    </header>
+
+    <section class="intro" aria-labelledby="demo-title">
+      <div>
+        <p class="eyebrow">Real Sift routing</p>
+        <h1 id="demo-title">Send the mess.<br>Sift keeps the signal.</h1>
+      </div>
+      <p>Try the same ingest, memory, planning, and reminder logic used by Sift in Messages. This is a browser conversation—not a phone replica.</p>
+    </section>
+
+    <section class="starter-section" id="starters" aria-labelledby="starter-title">
+      <div class="section-heading">
+        <h2 id="starter-title">Start with something real</h2>
+        <span>Each card becomes a generated screenshot and enters the actual attachment pipeline.</span>
+      </div>
+      <div class="starter-grid">
+        <button class="starter" data-scenario="deadlines" type="button">
+          <span class="starter-index">01</span><span class="starter-copy"><strong>Find syllabus deadlines</strong><small>Read a current course schedule</small></span><span aria-hidden="true">→</span>
+        </button>
+        <button class="starter" data-scenario="cafe" type="button">
+          <span class="starter-index">02</span><span class="starter-copy"><strong>Remember a café</strong><small>Save a place and retrieve it later</small></span><span aria-hidden="true">→</span>
+        </button>
+        <button class="starter" data-scenario="application" type="button">
+          <span class="starter-index">03</span><span class="starter-copy"><strong>Schedule a reminder</strong><small>Track an application deadline</small></span><span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </section>
+
+    <section class="conversation" aria-label="Sift demo conversation">
+      <div class="conversation-head">
+        <div class="avatar">S</div>
+        <div><strong>Sift</strong><span id="conversation-status">Ready when you are</span></div>
+        <span class="live-badge">24h memory</span>
+      </div>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions">
+        <div class="empty-state" id="empty-state">
+          <span class="empty-mark">✦</span>
+          <p>Drop in a screenshot or PDF, tell Sift something worth remembering, or use a starter above.</p>
+        </div>
+      </div>
+
+      <form id="composer" class="composer">
+        <div id="file-preview" class="file-preview" hidden>
+          <div class="file-icon">DOC</div><div><strong id="file-name"></strong><span id="file-size"></span></div>
+          <button id="remove-file" type="button" aria-label="Remove attachment">×</button>
+        </div>
+        <label class="composer-input" id="drop-target">
+          <span class="sr-only">Message Sift</span>
+          <textarea id="message-input" name="message" rows="1" maxlength="2000" placeholder="Send Sift something to remember…"></textarea>
+          <span class="character-count" id="character-count">0 / 2,000</span>
+        </label>
+        <div class="composer-actions">
+          <div>
+            <label class="attach-button" for="file-input" title="Attach a PDF or image"><span aria-hidden="true">＋</span> Attach</label>
+            <input id="file-input" type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden>
+            <span class="composer-help">PDF or image · 8 MB max</span>
+          </div>
+          <button class="send-button" id="send-button" type="submit">Send <span aria-hidden="true">↑</span></button>
+        </div>
+      </form>
+    </section>
+
+    <footer class="disclosure">
+      <strong>This demo makes real model calls.</strong>
+      <span>Messages and uploads are stored server-side for a fixed 24 hours, then deleted. Limits: 12 turns, four attachment turns, one file per turn, and 20 MB total. Start over deletes the session immediately.</span>
+    </footer>
+  </main>
+  <template id="typing-template"><div class="row assistant-row typing-row"><div class="bubble assistant-bubble typing"><i></i><i></i><i></i><span class="sr-only">Sift is responding</span></div></div></template>
+</body>
+</html>

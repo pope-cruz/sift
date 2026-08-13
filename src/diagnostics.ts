@@ -2,7 +2,7 @@ const SECRET_PATTERNS = [
   /\bsk-(?:ant-)?[A-Za-z0-9_-]{12,}\b/g,
   /\b(?:Bearer\s+)[A-Za-z0-9._~-]+/gi,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
-  /\b(PROJECT_SECRET|SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY)\s*[=:]\s*\S+/gi,
+  /\b(PROJECT_SECRET|SUPABASE_SERVICE_ROLE_KEY|ANTHROPIC_API_KEY|DEMO_TOKEN_SECRET|CRON_SECRET)\s*[=:]\s*\S+/gi,
 ];
 
 export type SafeDiagnostic = {

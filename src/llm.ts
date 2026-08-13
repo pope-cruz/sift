@@ -4,7 +4,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
 import { today } from "./dates.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
-import { env } from "./env.ts";
+import { sharedEnv } from "./env.ts";
 import { ArtifactAnalysisBatch } from "./schemas.ts";
 import type { ArtifactAnalysis } from "./schemas.ts";
 import {
@@ -31,7 +31,7 @@ const READER_EFFORT = "medium" as const;
 let client: Anthropic | undefined;
 
 function anthropic(): Anthropic {
-  if (!client) client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  if (!client) client = new Anthropic({ apiKey: sharedEnv.ANTHROPIC_API_KEY });
   return client;
 }
 

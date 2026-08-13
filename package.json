@@ -21,12 +21,14 @@
     "phase3:audit": "tsx src/spike/phase3-audit.ts",
     "phase4:audit": "tsx src/spike/phase4-audit.ts",
     "phase4:controls": "tsx src/spike/phase4-control-check.ts",
+    "tone:smoke": "tsx src/spike/tone-smoke.ts",
     "remind:now": "tsx src/remind-now.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
     "@supabase/supabase-js": "^2.112.2",
     "dotenv": "^17.4.2",
+    "hono": "^4.9.8",
     "node-cron": "^4.6.0",
     "sharp": "^0.35.3",
     "spectrum-ts": "^12.7.0",

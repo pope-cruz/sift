@@ -6,25 +6,17 @@ import { attachmentsOf, parts, textOf } from "./content.ts";
 import {
   attachSpaceToStudent,
   backfillMessageStudent,
-  getContextRows,
   recordMessage,
   type Student,
 } from "./db.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
 import { env } from "./env.ts";
-import { ingest } from "./ingest.ts";
-import { respond } from "./llm.ts";
-import { today } from "./dates.ts";
-import { assembleContext, fallbackReply, renderContext, validateReply } from "./planner.ts";
 import { sendRecovery } from "./recovery.ts";
-import { runTool, TOOLS } from "./tools.ts";
+import { processTurn } from "./turn-core.ts";
 
 const WELCOME =
   "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
   "and I'll keep track of it and remind you when it matters. Ask me what's coming up any time.";
-
-const CANT_READ =
-  "I can't read that one yet — send me a PDF, a screenshot, or just type it and I'll keep track of it.";
 
 /**
  * Send and persist. This line does not echo outbound messages back into the
@@ -79,52 +71,15 @@ export async function handleTurn(space: Space, message: Message, student: Studen
       return;
     }
 
-    // `current` is a mutable outer binding so the catch can see it, which
-    // means its narrowing doesn't survive into the closures below. Rebind.
     const active = current;
-
-    // Files take the direct path — the turn's latency-critical beat. What the
-    // artifact IS gets decided inside ingest, not here.
-    if (files.length > 0) {
-      // The literal pre-reply from the demo script, so the wait reads as work.
-      await say(space, active.id, "Sifting...");
-      await space.responding(async () => {
-        await say(space, active.id, await ingest({ student: active, text, files }));
-      });
-      return;
-    }
-
-    // Voice notes, contact cards and the like. Silence reads as a dropped
-    // message, so say what happened rather than returning without a word.
-    if (!text) {
-      await say(space, active.id, CANT_READ);
-      return;
-    }
-
-    // Every retrieve/plan answer crosses the same deterministic boundary.
-    // Queries are identity-scoped in db.ts and filtered by student id again in
-    // assembly; only compact evidence reaches the answering model.
-    const context = assembleContext({
+    await processTurn({
       student: active,
-      question: text,
-      today: today(active.timezone),
-      rows: await getContextRows(active.id),
+      turn: { id: message.id, text, attachments: files },
+      channel: {
+        send: (reply) => say(space, active.id, reply),
+        responding: (work) => space.responding(work),
+      },
     });
-
-    const reply = await space.responding(() =>
-      respond({
-        history: context.messages.map(({ direction, content }) => ({ direction, content })),
-        text,
-        context: renderContext(context),
-        timezone: active.timezone,
-        tools: TOOLS,
-        runTool: (name, args) => runTool(active, name, args),
-        validateReply: (text, attempt) => validateReply(context, text, attempt),
-        fallbackReply: fallbackReply(context),
-      }),
-    );
-
-    await say(space, active.id, reply);
   } catch (error) {
     console.error("turn failed", {
       spaceId: space.id,

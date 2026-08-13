@@ -14,7 +14,6 @@
 // path could distinguish a year in a title from a date something happens on.
 // MIME type now decides one thing only — document block or image block.
 import sharp from "sharp";
-import type { Attachment } from "spectrum-ts";
 
 import { aggregate, type AdmissionContext } from "./analysis.ts";
 import { today } from "./dates.ts";
@@ -31,6 +30,7 @@ import {
 import { analyzeArtifact } from "./llm.ts";
 import { classifyInputMime, uniqueAttachments, validateReadableBytes } from "./input.ts";
 import { rollbackArtifact, settleArtifactPreparation } from "./rollback.ts";
+import type { TurnAttachment } from "./turn-core.ts";
 
 const isPdf = (mimeType: string) => mimeType === "application/pdf";
 const isImage = (mimeType: string) => mimeType.startsWith("image/");
@@ -97,7 +97,7 @@ async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
  */
 async function ingestArtifact(
   student: Student,
-  file: Attachment,
+  file: TurnAttachment,
   caption: string,
   captionScope: AdmissionContext["captionScope"],
 ): Promise<string> {
@@ -215,7 +215,7 @@ async function ingestArtifact(
 export async function ingest(input: {
   student: Student;
   text: string;
-  files: Attachment[];
+  files: TurnAttachment[];
 }): Promise<string> {
   const started = Date.now();
   try {
@@ -228,7 +228,7 @@ export async function ingest(input: {
 async function route(input: {
   student: Student;
   text: string;
-  files: Attachment[];
+  files: TurnAttachment[];
 }): Promise<string> {
   const { student, text } = input;
   const files = uniqueAttachments(input.files);

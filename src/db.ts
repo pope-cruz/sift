@@ -1,6 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
-import { env } from "./env.ts";
+import { sharedEnv } from "./env.ts";
 import { localInstant } from "./dates.ts";
 import type {
   ContextActionRow,
@@ -11,7 +11,7 @@ import type {
 import { REMINDER_CLAIMED_STATUS, type ReminderClaim } from "./reminders.ts";
 import { storedDueTime } from "./stored-deadlines.ts";
 
-export const db = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
+export const db = createClient(sharedEnv.SUPABASE_URL, sharedEnv.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
@@ -22,12 +22,15 @@ export type Student = {
   photon_space_id: string | null;
   timezone: string;
   profile: Record<string, unknown>;
+  channel: "imessage" | "web_demo";
 };
+
+const STUDENT_COLUMNS = "id, name, phone, photon_space_id, timezone, profile, channel";
 
 export async function getStudentBySpaceId(spaceId: string): Promise<Student | null> {
   const { data, error } = await db
     .from("students")
-    .select("id, name, phone, photon_space_id, timezone, profile")
+    .select(STUDENT_COLUMNS)
     .eq("photon_space_id", spaceId)
     .maybeSingle();
 
@@ -39,7 +42,7 @@ export async function getStudentBySpaceId(spaceId: string): Promise<Student | nu
 export async function getStudentByPhone(phone: string): Promise<Student | null> {
   const { data, error } = await db
     .from("students")
-    .select("id, name, phone, photon_space_id, timezone, profile")
+    .select(STUDENT_COLUMNS)
     .eq("phone", phone)
     .maybeSingle();
 
@@ -50,7 +53,7 @@ export async function getStudentByPhone(phone: string): Promise<Student | null> 
 export async function getStudentById(studentId: string): Promise<Student | null> {
   const { data, error } = await db
     .from("students")
-    .select("id, name, phone, photon_space_id, timezone, profile")
+    .select(STUDENT_COLUMNS)
     .eq("id", studentId)
     .maybeSingle();
 
@@ -111,7 +114,7 @@ export async function attachSpaceToStudent(phone: string, spaceId: string): Prom
     .from("students")
     .update({ photon_space_id: spaceId })
     .eq("phone", phone)
-    .select("id, name, phone, photon_space_id, timezone, profile")
+    .select(STUDENT_COLUMNS)
     .single();
 
   if (error) throw error;
@@ -413,10 +416,15 @@ type ReminderActionRow = {
  * false until the provider callback succeeds; the temporary action status is
  * the claim token.
  */
-export async function claimDueReminders(now: Date, limit: number): Promise<ReminderClaim[]> {
-  const candidates = await db
+async function claimDueRemindersFor(
+  now: Date,
+  limit: number,
+  scope: { channel: Student["channel"]; studentId?: string },
+): Promise<ReminderClaim[]> {
+  let candidateQuery = db
     .from("actions")
-    .select("id, student_id, item_id, description, due_date, remind_at")
+    .select("id, student_id, item_id, description, due_date, remind_at, students!inner(channel)")
+    .eq("students.channel", scope.channel)
     .eq("status", "open")
     .eq("reminder_sent", false)
     .not("remind_at", "is", null)
@@ -424,6 +432,8 @@ export async function claimDueReminders(now: Date, limit: number): Promise<Remin
     .lte("remind_at", now.toISOString())
     .order("remind_at", { ascending: true })
     .limit(Math.max(limit * 2, limit));
+  if (scope.studentId) candidateQuery = candidateQuery.eq("student_id", scope.studentId);
+  const candidates = await candidateQuery;
   if (candidates.error) throw candidates.error;
 
   const claimed: ReminderActionRow[] = [];
@@ -465,7 +475,9 @@ export async function claimDueReminders(now: Date, limit: number): Promise<Remin
       ? localInstant(action.due_date, dueTime ?? "20:00", student.timezone)
       : null;
     if (
-      !student?.photon_space_id ||
+      !student ||
+      student.channel !== scope.channel ||
+      (scope.channel === "imessage" && !student.photon_space_id) ||
       !action.description ||
       !action.due_date ||
       !action.remind_at ||
@@ -490,7 +502,7 @@ export async function claimDueReminders(now: Date, limit: number): Promise<Remin
       actionId: action.id,
       studentId: action.student_id,
       itemId: action.item_id,
-      spaceId: student.photon_space_id,
+      spaceId: student.photon_space_id ?? `web:${student.id}`,
       timezone: student.timezone,
       description: action.description,
       dueDate: action.due_date,
@@ -502,6 +514,32 @@ export async function claimDueReminders(now: Date, limit: number): Promise<Remin
   }
 
   return hydrated;
+}
+
+/** Production workers can only claim iMessage students. */
+export function claimDueReminders(now: Date, limit: number): Promise<ReminderClaim[]> {
+  return claimDueRemindersFor(now, limit, { channel: "imessage" });
+}
+
+/** The web path is additionally scoped to the authenticated anonymous student. */
+export function claimWebDemoReminders(studentId: string, now: Date, limit = 1): Promise<ReminderClaim[]> {
+  return claimDueRemindersFor(now, limit, { channel: "web_demo", studentId });
+}
+
+export async function nextPendingReminder(studentId: string): Promise<{ actionId: string; targetTime: string } | null> {
+  const result = await db
+    .from("actions")
+    .select("id, remind_at")
+    .eq("student_id", studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .not("remind_at", "is", null)
+    .not("due_date", "is", null)
+    .order("remind_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (result.error) throw result.error;
+  return result.data?.remind_at ? { actionId: result.data.id, targetTime: result.data.remind_at } : null;
 }
 
 export async function markReminderDelivered(claim: ReminderClaim): Promise<void> {

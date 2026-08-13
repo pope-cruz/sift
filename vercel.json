@@ -1,0 +1,18 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/demo.ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    { "source": "/api/demo/:path*", "destination": "/api/demo?route=:path*" },
+    { "source": "/demo", "destination": "/web/demo/index.html" },
+    { "source": "/demo/", "destination": "/web/demo/index.html" },
+    { "source": "/demo/:path*", "destination": "/web/demo/:path*" },
+    { "source": "/", "destination": "/web/index.html" }
+  ],
+  "crons": [
+    { "path": "/api/demo/cleanup", "schedule": "17 4 * * *" }
+  ]
+}
