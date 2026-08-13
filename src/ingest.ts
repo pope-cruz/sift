@@ -16,6 +16,7 @@
 import sharp from "sharp";
 
 import { aggregate, type AdmissionContext } from "./analysis.ts";
+import { mapWithLimit } from "./concurrency.ts";
 import { friendly, today } from "./dates.ts";
 import { InputDiagnosticError, safeDiagnostic } from "./diagnostics.ts";
 import {
@@ -83,13 +84,18 @@ async function forVision(
  * while a real turn has been reported at ~45s, and the gap is upstream of any
  * code here — pulling the bytes from the provider. Guessing which stage is slow
  * is how you optimise the wrong one, so every stage reports.
+ *
+ * Every stage names its file. Attachments are read concurrently now, so a
+ * multi-file turn interleaves these lines — and a bare "analyze 8123ms" among
+ * three of them says nothing about which file was slow. LIVE_VALIDATION.md
+ * reads stage latency straight off this output.
  */
-async function timed<T>(label: string, fn: () => Promise<T>): Promise<T> {
+async function timed<T>(stage: string, filename: string, fn: () => Promise<T>): Promise<T> {
   const started = Date.now();
   try {
     return await fn();
   } finally {
-    console.log(`[ingest] ${label} ${Date.now() - started}ms`);
+    console.log(`[ingest] ${stage} ${filename} ${Date.now() - started}ms`);
   }
 }
 
@@ -111,9 +117,9 @@ async function ingestArtifact(
   // out, not the check itself — the real one is on the bytes we actually got.
   if (file.size !== undefined && file.size > MAX_BYTES) return tooBig(file.name);
 
-  const bytes = await timed(`read ${file.name}`, () => file.read());
+  const bytes = await timed("read", file.name, () => file.read());
 
-  await timed("validate", () => validateReadableBytes(bytes, file.mimeType, file.name));
+  await timed("validate", file.name, () => validateReadableBytes(bytes, file.mimeType, file.name));
 
   // An image gets downscaled below, so only an oversized PDF is fatal here.
   if (isPdf(file.mimeType) && bytes.length > MAX_BYTES) return tooBig(file.name);
@@ -121,11 +127,11 @@ async function ingestArtifact(
   // Vision needs the shrunken copy; a PDF goes as it came.
   const forModel = isPdf(file.mimeType)
     ? { bytes, mimeType: file.mimeType }
-    : await timed("downscale", () => forVision(bytes, file.mimeType));
+    : await timed("downscale", file.name, () => forVision(bytes, file.mimeType));
 
   // The upload needs nothing from the analysis, and the student is waiting on
   // the analysis alone — so pay for them once, not back to back.
-  const analysisWork = timed("analyze", () =>
+  const analysisWork = timed("analyze", file.name, () =>
     analyzeArtifact({
         bytes: forModel.bytes,
         mimeType: forModel.mimeType,
@@ -137,7 +143,7 @@ async function ingestArtifact(
     ? await settleArtifactPreparation({
         analysis: analysisWork,
         // The full-resolution original goes to storage, not the shrunken copy.
-        upload: timed("upload", () => uploadAttachmentBytes({
+        upload: timed("upload", file.name, () => uploadAttachmentBytes({
         studentId: student.id,
         filename: file.name,
         mimeType: file.mimeType,
@@ -176,19 +182,22 @@ async function ingestArtifact(
   for (const result of results) {
     for (const decision of result.decisions) {
       console.log(
-        `[ingest] date (${decision.candidate.role}, ${decision.candidate.source}) -> ` +
+        `[ingest] date ${file.name} (${decision.candidate.role}, ${decision.candidate.source}) -> ` +
           `${decision.outcome}: ${decision.reason}`,
       );
     }
   }
 
-  // One attachment can yield several isolated items. If any write fails, roll
-  // every item from this attachment back so a resend cannot duplicate a subset.
-  const itemIds: string[] = [];
-  let createdAny = false;
-  try {
-    for (const [index, result] of results.entries()) {
-      const saved = await saveIngestItemAtomic({
+  // One attachment can yield several isolated items. Each write is atomic on its
+  // own, so they go out together rather than one round trip after another.
+  //
+  // `allSettled` rather than `all`: if any write fails we roll every item from
+  // this attachment back, and that needs the ids of the writes that *succeeded*.
+  // `all` rejects while its siblings are still in flight, which would leave a
+  // just-created row invisible to the rollback and a resend duplicating a subset.
+  const written = await Promise.allSettled(
+    results.map((result, index) =>
+      saveIngestItemAtomic({
         studentId: student.id,
         sourceMessageId: `${sourceMessageId}:${index}`,
         sourceTurnId,
@@ -201,14 +210,18 @@ async function ingestArtifact(
         mimeType: file.mimeType,
         storagePath,
         actions: result.actions,
-      });
-      if (!saved.duplicate) {
-        createdAny = true;
-        itemIds.push(saved.itemId);
-      }
-    }
-    if (!createdAny) await deleteAttachmentBytes(storagePath);
-  } catch (error) {
+      })),
+  );
+
+  const itemIds = written.flatMap((outcome) =>
+    outcome.status === "fulfilled" && !outcome.value.duplicate ? [outcome.value.itemId] : [],
+  );
+  const createdAny = itemIds.length > 0;
+
+  const failed = written.find(
+    (outcome): outcome is PromiseRejectedResult => outcome.status === "rejected",
+  );
+  if (failed) {
     const cleanupFailures = await rollbackArtifact({
       itemIds,
       storagePath,
@@ -221,7 +234,22 @@ async function ingestArtifact(
         error: safeDiagnostic(failure.error),
       });
     }
-    throw error;
+    throw failed.reason;
+  }
+
+  // Every item was a duplicate resend, so nothing references these bytes and the
+  // orphaned upload goes. Logged the way the rollback path logs it rather than
+  // surfacing as a bare storage error, which is what the old try/catch did.
+  if (!createdAny) {
+    try {
+      await deleteAttachmentBytes(storagePath);
+    } catch (error) {
+      console.error("[ingest] cleanup failed", {
+        target: `storage:${storagePath}`,
+        error: safeDiagnostic(error),
+      });
+      throw error;
+    }
   }
 
   return results.map((result) => result.confirmation).join(" ");
@@ -247,6 +275,19 @@ export async function ingest(input: {
   }
 }
 
+/**
+ * How many attachments are read and analyzed at once.
+ *
+ * Files used to go one at a time, so a three-screenshot turn paid three
+ * provider downloads and three vision calls back to back — and the download is
+ * the dominant cost (see `timed`). The work is independent per file, so the
+ * only reason to bound it at all is resources: each slot can hold a 20MB buffer
+ * plus its base64 copy, and the reader calls share one API rate limit. Three is
+ * the point where a normal multi-file turn is fully parallel and a pathological
+ * one still can't exhaust memory.
+ */
+const MAX_CONCURRENT_ARTIFACTS = 3;
+
 async function route(input: {
   student: Student;
   text: string;
@@ -256,40 +297,39 @@ async function route(input: {
   const { student, text } = input;
   const files = uniqueAttachments(input.files);
 
-  const replies: string[] = [];
   const persist = shouldPersistArtifact(text);
 
-  for (const [fileIndex, file] of files.entries()) {
+  // Per-file failures are caught inside the mapper, never thrown out of it: one
+  // unreadable screenshot in a three-file turn should cost that file's sentence,
+  // not the other two files' work.
+  const replies = await mapWithLimit(files, MAX_CONCURRENT_ARTIFACTS, async (file, fileIndex) => {
     // The only decision MIME type gets to make: can the model read these bytes,
     // and as which block type. What the content *means* is decided downstream.
     const kind = classifyInputMime(file.mimeType);
-    if (kind === "pdf" || kind === "image") {
-      try {
-        replies.push(
-          await ingestArtifact(
-            student,
-            file,
-            text,
-            files.length === 1 ? "single_artifact" : "multi_artifact_turn",
-            `${input.sourceMessageId ?? "attachment"}:${file.id}:${fileIndex}`,
-            input.sourceMessageId ?? "attachment",
-            persist,
-          ),
-        );
-      } catch (error) {
-        const diagnostic = safeDiagnostic(error);
-        console.error("[ingest] artifact failed", { code: diagnostic.code, error: diagnostic });
-        if (error instanceof InputDiagnosticError) replies.push(error.userMessage);
-        else replies.push(`I couldn't finish reading ${file.name}. Try sending it again.`);
-      }
-    } else if (kind === "unsupported_image") {
-      replies.push(
-        `I can't read ${file.name} — it came through as ${file.mimeType}. A screenshot works better than a photo.`,
-      );
-    } else {
-      replies.push(`I can't read ${file.name} yet — send me a PDF or a screenshot.`);
+    if (kind === "unsupported_image") {
+      return `I can't read ${file.name} — it came through as ${file.mimeType}. A screenshot works better than a photo.`;
     }
-  }
+    if (kind !== "pdf" && kind !== "image") {
+      return `I can't read ${file.name} yet — send me a PDF or a screenshot.`;
+    }
+
+    try {
+      return await ingestArtifact(
+        student,
+        file,
+        text,
+        files.length === 1 ? "single_artifact" : "multi_artifact_turn",
+        `${input.sourceMessageId ?? "attachment"}:${file.id}:${fileIndex}`,
+        input.sourceMessageId ?? "attachment",
+        persist,
+      );
+    } catch (error) {
+      const diagnostic = safeDiagnostic(error);
+      console.error("[ingest] artifact failed", { code: diagnostic.code, error: diagnostic });
+      if (error instanceof InputDiagnosticError) return error.userMessage;
+      return `I couldn't finish reading ${file.name}. Try sending it again.`;
+    }
+  });
 
   return replies.join(" ");
 }

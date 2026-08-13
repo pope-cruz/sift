@@ -44,7 +44,9 @@ export async function processTurn(input: {
 
   await routeActiveTurn({
     text: turn.text,
-    attachmentCount: turn.attachments.length,
+    // Passed whole rather than counted: the wait notice reads mime type and size
+    // to say something specific, and both are known before any byte is fetched.
+    attachments: turn.attachments,
     channel,
     ingest: () => ingest({ student, text: turn.text, files: turn.attachments, sourceMessageId: turn.id }),
     answer: async () => {

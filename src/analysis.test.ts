@@ -649,13 +649,17 @@ test("ingest asks only the clarification needed for an unresolved deadline", () 
 });
 
 test("weak filename adjectives cannot override the content classification", () => {
+  // effectivePurpose no longer accepts a filename, so at that layer this is a
+  // structural guarantee rather than a behavioural one. It is still worth
+  // asserting where a filename remains in scope: aggregate reads one off
+  // AdmissionContext, and that is the path ingest actually calls.
   const exam = analysis({ title: "Midterm 2", purpose: "exam_information" });
-  assert.equal(effectivePurpose(exam, "midterm2.pdf"), "exam_information");
-  assert.equal(effectivePurpose(exam, "Sample Midterm 2.pdf"), "exam_information");
-  assert.equal(effectivePurpose(exam, "past-midterm2.pdf"), "exam_information");
-  assert.equal(effectivePurpose(exam, "mock exam.pdf"), "exam_information");
+  for (const filename of ["midterm2.pdf", "Sample Midterm 2.pdf", "past-midterm2.pdf", "mock exam.pdf"]) {
+    assert.equal(aggregate(exam, context({ filename })).item.type, "exam_information", filename);
+  }
 
   // A real syllabus is not reclassified just because it mentions nothing special.
   const syllabus = analysis({ title: "CS 4414 Syllabus", purpose: "syllabus" });
-  assert.equal(effectivePurpose(syllabus, "syllabus.pdf"), "syllabus");
+  assert.equal(effectivePurpose(syllabus), "syllabus");
+  assert.equal(aggregate(syllabus, context({ filename: "syllabus.pdf" })).item.type, "syllabus");
 });

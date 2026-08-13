@@ -26,9 +26,23 @@ const WELCOME =
  * Persistence failures are logged, never thrown: the message has already gone
  * out, and surfacing an error would make the caller apologize for a reply the
  * student can see.
+ *
+ * `transient` sends without recording. A progress notice is real in iMessage but
+ * is not part of the conversation: assembleContext carries only the last ten
+ * messages to the model, so every recorded "give me a minute" evicts a turn that
+ * carried meaning — and the system prompt asks the model to resolve "it" and
+ * "that" against its own previous message, which a progress ping cannot answer.
+ * The web demo already dropped these; Spectrum ignored the flag and stored them.
  */
-export async function say(space: Space, studentId: string | null, text: string) {
+export async function say(
+  space: Space,
+  studentId: string | null,
+  text: string,
+  options?: { transient?: boolean },
+) {
   const sent = await space.send(text);
+
+  if (options?.transient) return;
 
   try {
     await recordMessage({
@@ -91,9 +105,9 @@ export async function handleTurnBatch(
       student: active,
       turn: { id: turnId, text, attachments: files },
       channel: {
-        send: async (reply) => {
+        send: async (reply, options) => {
           if (isSuperseded()) return;
-          await say(space, active.id, reply);
+          await say(space, active.id, reply, options);
         },
         responding: (work) => space.responding(work),
       },
