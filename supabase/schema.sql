@@ -28,6 +28,8 @@ create table if not exists items (
   created_at timestamptz not null default now()
 );
 
+alter table items add column if not exists source_message_id text;
+
 create table if not exists actions (
   id uuid primary key default gen_random_uuid(),
   student_id uuid not null references students on delete cascade,
@@ -59,6 +61,13 @@ create table if not exists messages (
   created_at timestamptz not null default now()
 );
 
+alter table messages add column if not exists processing_status text not null default 'complete';
+alter table messages add column if not exists processing_started_at timestamptz;
+alter table messages add column if not exists processing_attempts integer not null default 0;
+alter table messages drop constraint if exists messages_processing_status_check;
+alter table messages add constraint messages_processing_status_check
+  check (processing_status in ('pending', 'processing', 'complete', 'failed'));
+
 create table if not exists demo_sessions (
   id uuid primary key default gen_random_uuid(),
   token_hash text unique not null,
@@ -87,6 +96,8 @@ create table if not exists demo_turns (
   status text not null default 'accepted' check (status in ('accepted', 'processing', 'complete', 'failed')),
   events jsonb not null default '[]',
   failure_code text,
+  attempt_count integer not null default 1,
+  lease_expires_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (session_id, client_message_id)
@@ -100,15 +111,34 @@ create table if not exists demo_uploads (
   filename text not null,
   mime_type text not null,
   size_bytes bigint not null check (size_bytes between 1 and 8388608),
-  status text not null default 'reserved' check (status in ('reserved', 'processing', 'consumed')),
+  status text not null default 'reserved' check (status in ('reserved', 'processing', 'consumed', 'refunded')),
   created_at timestamptz not null default now(),
   unique (session_id, client_message_id)
 );
 
+create table if not exists job_failures (
+  id uuid primary key default gen_random_uuid(),
+  stage text not null,
+  resource_id text,
+  error_code text,
+  detail jsonb not null default '{}',
+  created_at timestamptz not null default now()
+);
+
+alter table demo_turns add column if not exists attempt_count integer not null default 1;
+alter table demo_turns add column if not exists lease_expires_at timestamptz;
+alter table demo_uploads drop constraint if exists demo_uploads_status_check;
+alter table demo_uploads add constraint demo_uploads_status_check
+  check (status in ('reserved', 'processing', 'consumed', 'refunded'));
+
 -- Every read path filters by student_id; index accordingly.
 create index if not exists items_student_created_idx on items (student_id, created_at desc);
+create unique index if not exists items_student_source_message_idx
+  on items (student_id, source_message_id) where source_message_id is not null;
 create index if not exists actions_student_due_idx on actions (student_id, due_date);
 create index if not exists messages_student_created_idx on messages (student_id, created_at desc);
+create index if not exists messages_pending_idx on messages (processing_status, created_at)
+  where direction = 'inbound' and processing_status <> 'complete';
 -- The reminder cron's claim query.
 create index if not exists actions_due_reminders_idx on actions (remind_at) where reminder_sent = false;
 create index if not exists students_channel_idx on students (channel);
@@ -117,6 +147,7 @@ create index if not exists demo_session_issuances_client_created_idx on demo_ses
 create index if not exists demo_sessions_expiry_idx on demo_sessions (expires_at);
 create index if not exists demo_turns_session_created_idx on demo_turns (session_id, created_at);
 create index if not exists demo_uploads_session_idx on demo_uploads (session_id);
+create index if not exists job_failures_created_idx on job_failures (created_at desc);
 
 -- The worker connects with the service-role key, which bypasses RLS. Enabling
 -- it with no policies means a leaked anon key reads nothing.
@@ -129,13 +160,102 @@ alter table demo_sessions enable row level security;
 alter table demo_session_issuances enable row level security;
 alter table demo_turns enable row level security;
 alter table demo_uploads enable row level security;
+alter table job_failures enable row level security;
 
 -- The worker connects as service_role, which bypasses RLS but still needs table
 -- privileges. Supabase's default privileges did not cover tables created here,
 -- so grant explicitly. Deliberately NOT granted to anon/authenticated — nothing
 -- outside the worker touches these tables.
 grant usage on schema public to service_role;
-grant all privileges on table students, items, actions, attachments, messages, demo_sessions, demo_session_issuances, demo_turns, demo_uploads to service_role;
+grant all privileges on table students, items, actions, attachments, messages, demo_sessions, demo_session_issuances, demo_turns, demo_uploads, job_failures to service_role;
+
+-- One text mutation becomes one durable command. The stable source message id
+-- is the idempotency key, and item + action writes share this transaction.
+create or replace function save_note_with_actions(
+  p_student_id uuid,
+  p_source_message_id text,
+  p_title text,
+  p_summary text,
+  p_extracted_text text,
+  p_actions jsonb
+) returns table(item_id uuid, duplicate boolean)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_item uuid;
+begin
+  perform pg_advisory_xact_lock(hashtext(p_student_id::text || ':' || p_source_message_id));
+  select id into v_item from items
+    where student_id = p_student_id and source_message_id = p_source_message_id;
+  if found then
+    return query select v_item, true;
+    return;
+  end if;
+
+  if jsonb_typeof(p_actions) <> 'array' or jsonb_array_length(p_actions) > 20 then
+    raise exception using errcode = 'P0001', message = 'INVALID_NOTE_ACTIONS';
+  end if;
+
+  insert into items (student_id, type, title, summary, extracted_text, category, source_message_id)
+  values (p_student_id, 'note', p_title, p_summary, p_extracted_text, 'note', p_source_message_id)
+  returning id into v_item;
+
+  insert into actions (student_id, item_id, description, due_date, remind_at, status)
+  select
+    p_student_id,
+    v_item,
+    entry->>'description',
+    nullif(entry->>'due_date', '')::date,
+    nullif(entry->>'remind_at', '')::timestamptz,
+    case when entry->>'status' = 'reference' then 'reference' else 'open' end
+  from jsonb_array_elements(p_actions) as entry;
+
+  return query select v_item, false;
+end $$;
+
+create or replace function save_ingest_item(
+  p_student_id uuid,
+  p_source_message_id text,
+  p_type text,
+  p_title text,
+  p_summary text,
+  p_extracted_text text,
+  p_category text,
+  p_filename text,
+  p_mime_type text,
+  p_storage_path text,
+  p_actions jsonb
+) returns table(item_id uuid, duplicate boolean)
+language plpgsql security definer set search_path = public as $$
+declare
+  v_item uuid;
+begin
+  perform pg_advisory_xact_lock(hashtext(p_student_id::text || ':' || p_source_message_id));
+  select id into v_item from items
+    where student_id = p_student_id and source_message_id = p_source_message_id;
+  if found then
+    return query select v_item, true;
+    return;
+  end if;
+  if jsonb_typeof(p_actions) <> 'array' or jsonb_array_length(p_actions) > 100 then
+    raise exception using errcode = 'P0001', message = 'INVALID_INGEST_ACTIONS';
+  end if;
+
+  insert into items (student_id, type, title, summary, extracted_text, category, source_message_id)
+  values (p_student_id, p_type, p_title, p_summary, p_extracted_text, p_category, p_source_message_id)
+  returning id into v_item;
+  insert into attachments (student_id, item_id, filename, mime_type, storage_path)
+  values (p_student_id, v_item, p_filename, p_mime_type, p_storage_path);
+  insert into actions (student_id, item_id, description, due_date, remind_at, status)
+  select
+    p_student_id,
+    v_item,
+    entry->>'description',
+    nullif(entry->>'due_date', '')::date,
+    nullif(entry->>'remind_at', '')::timestamptz,
+    case when entry->>'status' = 'reference' then 'reference' else 'open' end
+  from jsonb_array_elements(p_actions) as entry;
+  return query select v_item, false;
+end $$;
 
 -- Atomically create an isolated student and fixed 24-hour session while
 -- enforcing the per-client creation cap. The caller supplies only hashes.
@@ -194,6 +314,39 @@ begin
   select * into u from demo_uploads
     where demo_uploads.session_id = s.id and client_message_id = p_client_message_id;
   if found then
+    if u.status = 'refunded' then
+      if p_mime_type not in ('application/pdf', 'image/jpeg', 'image/png', 'image/webp') then
+        raise exception using errcode = 'P0001', message = 'DEMO_INVALID_UPLOAD_TYPE';
+      end if;
+      if p_size_bytes < 1 or p_size_bytes > 8388608 then
+        raise exception using errcode = 'P0001', message = 'DEMO_INVALID_UPLOAD_SIZE';
+      end if;
+      if s.turns_used >= 12 then
+        raise exception using errcode = 'P0001', message = 'DEMO_TURN_QUOTA';
+      end if;
+      if s.attachment_turns_used >= 4 then
+        raise exception using errcode = 'P0001', message = 'DEMO_ATTACHMENT_QUOTA';
+      end if;
+      if s.attachment_bytes_used + p_size_bytes > 20971520 then
+        raise exception using errcode = 'P0001', message = 'DEMO_BYTES_QUOTA';
+      end if;
+      update demo_sessions set
+        attachment_turns_used = attachment_turns_used + 1,
+        attachment_bytes_used = attachment_bytes_used + p_size_bytes,
+        updated_at = now()
+      where id = s.id returning * into s;
+      update demo_uploads set
+        storage_path = p_storage_path,
+        filename = p_filename,
+        mime_type = p_mime_type,
+        size_bytes = p_size_bytes,
+        status = 'reserved',
+        created_at = now()
+      where id = u.id returning * into u;
+      return query select u.id, u.storage_path, false,
+        4 - s.attachment_turns_used, 20971520 - s.attachment_bytes_used;
+      return;
+    end if;
     return query select u.id, u.storage_path, true,
       4 - s.attachment_turns_used, 20971520 - s.attachment_bytes_used;
     return;
@@ -263,6 +416,19 @@ begin
   select * into t from demo_turns
   where demo_turns.session_id = s.id and client_message_id = p_client_message_id;
   if found then
+    if t.status = 'failed' or (t.status = 'processing' and coalesce(t.lease_expires_at, t.updated_at) <= now()) then
+      update demo_turns set
+        status = 'processing',
+        events = '[]'::jsonb,
+        failure_code = null,
+        attempt_count = attempt_count + 1,
+        lease_expires_at = now() + interval '5 minutes',
+        updated_at = now()
+      where id = t.id returning * into t;
+      return query select t.id, s.id, s.student_id, s.timezone, false, t.status, t.events,
+        12 - s.turns_used, 4 - s.attachment_turns_used, 20971520 - s.attachment_bytes_used;
+      return;
+    end if;
     return query select t.id, s.id, s.student_id, s.timezone, true, t.status, t.events,
       12 - s.turns_used, 4 - s.attachment_turns_used, 20971520 - s.attachment_bytes_used;
     return;
@@ -293,8 +459,8 @@ begin
     updated_at = now()
   where id = s.id returning * into s;
 
-  insert into demo_turns (session_id, client_message_id, kind, status)
-  values (s.id, p_client_message_id, p_kind, 'processing') returning * into t;
+  insert into demo_turns (session_id, client_message_id, kind, status, lease_expires_at)
+  values (s.id, p_client_message_id, p_kind, 'processing', now() + interval '5 minutes') returning * into t;
   if v_reserved_attachment then
     update demo_uploads set status = 'processing' where id = p_upload_id;
   end if;
@@ -302,12 +468,116 @@ begin
     12 - s.turns_used, 4 - s.attachment_turns_used, 20971520 - s.attachment_bytes_used;
 end $$;
 
+create or replace function release_demo_upload(
+  p_token_hash text,
+  p_upload_id uuid
+) returns table(storage_path text)
+language plpgsql security definer set search_path = public as $$
+declare
+  s demo_sessions%rowtype;
+  u demo_uploads%rowtype;
+  t demo_turns%rowtype;
+begin
+  select * into s from demo_sessions where token_hash = p_token_hash for update;
+  if not found or s.expires_at <= now() then
+    raise exception using errcode = 'P0001', message = 'DEMO_SESSION_EXPIRED';
+  end if;
+  select * into u from demo_uploads
+    where demo_uploads.id = p_upload_id and demo_uploads.session_id = s.id for update;
+  if not found or u.status in ('consumed', 'refunded') then return; end if;
+
+  update demo_sessions set
+    attachment_turns_used = greatest(0, attachment_turns_used - 1),
+    attachment_bytes_used = greatest(0, attachment_bytes_used - u.size_bytes),
+    updated_at = now()
+  where id = s.id;
+  update demo_uploads set status = 'refunded' where id = u.id;
+  select * into t from demo_turns
+    where demo_turns.session_id = s.id and demo_turns.client_message_id = u.client_message_id for update;
+  if found and t.status = 'processing' and t.events = '[]'::jsonb then
+    delete from demo_turns where id = t.id;
+    update demo_sessions set turns_used = greatest(0, turns_used - 1), updated_at = now()
+      where id = s.id;
+  end if;
+  return query select u.storage_path;
+end $$;
+
+create or replace function reset_demo_session(
+  p_token_hash text,
+  p_new_token_hash text
+) returns table(session_id uuid, student_id uuid, expires_at timestamptz)
+language plpgsql security definer set search_path = public as $$
+declare
+  s demo_sessions%rowtype;
+begin
+  select * into s from demo_sessions where token_hash = p_token_hash for update;
+  if not found or s.expires_at <= now() then
+    raise exception using errcode = 'P0001', message = 'DEMO_SESSION_EXPIRED';
+  end if;
+
+  delete from messages where messages.student_id = s.student_id;
+  delete from actions where actions.student_id = s.student_id;
+  delete from attachments where attachments.student_id = s.student_id;
+  delete from items where items.student_id = s.student_id;
+  delete from demo_turns where demo_turns.session_id = s.id;
+  delete from demo_uploads where demo_uploads.session_id = s.id;
+  update demo_sessions set
+    token_hash = p_new_token_hash,
+    turns_used = 0,
+    attachment_turns_used = 0,
+    attachment_bytes_used = 0,
+    updated_at = now()
+  where id = s.id returning * into s;
+  return query select s.id, s.student_id, s.expires_at;
+end $$;
+
+create or replace function claim_inbound_message(p_message_id text)
+returns boolean
+language plpgsql security definer set search_path = public as $$
+declare
+  v_id uuid;
+begin
+  update messages set
+    processing_status = 'processing',
+    processing_started_at = now(),
+    processing_attempts = processing_attempts + 1
+  where photon_message_id = p_message_id
+    and direction = 'inbound'
+    and (
+      processing_status in ('pending', 'failed')
+      or (processing_status = 'processing' and processing_started_at < now() - interval '5 minutes')
+    )
+  returning id into v_id;
+  return v_id is not null;
+end $$;
+
+create or replace function finish_inbound_message(p_message_id text, p_succeeded boolean)
+returns void
+language sql security definer set search_path = public as $$
+  update messages set
+    processing_status = case when p_succeeded then 'complete' else 'failed' end,
+    processing_started_at = null
+  where photon_message_id = p_message_id and direction = 'inbound';
+$$;
+
 revoke all on function create_demo_session(text, text, text) from public, anon, authenticated;
 revoke all on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) from public, anon, authenticated;
 revoke all on function claim_demo_turn(text, text, text, bigint, uuid) from public, anon, authenticated;
+revoke all on function save_note_with_actions(uuid, text, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function release_demo_upload(text, uuid) from public, anon, authenticated;
+revoke all on function reset_demo_session(text, text) from public, anon, authenticated;
+revoke all on function claim_inbound_message(text) from public, anon, authenticated;
+revoke all on function finish_inbound_message(text, boolean) from public, anon, authenticated;
 grant execute on function create_demo_session(text, text, text) to service_role;
 grant execute on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) to service_role;
 grant execute on function claim_demo_turn(text, text, text, bigint, uuid) to service_role;
+grant execute on function save_note_with_actions(uuid, text, text, text, text, jsonb) to service_role;
+grant execute on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, jsonb) to service_role;
+grant execute on function release_demo_upload(text, uuid) to service_role;
+grant execute on function reset_demo_session(text, text) to service_role;
+grant execute on function claim_inbound_message(text) to service_role;
+grant execute on function finish_inbound_message(text, boolean) to service_role;
 
 -- Private bucket for syllabi and screenshots.
 insert into storage.buckets (id, name, public)

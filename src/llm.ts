@@ -9,10 +9,12 @@ import { ArtifactAnalysisBatch } from "./schemas.ts";
 import type { ArtifactAnalysis } from "./schemas.ts";
 import {
   confirmationFallback,
+  MUTATION_TOOLS,
   RESPONSE_POLICY,
   type ReplyAttempt,
 } from "./response-policy.ts";
 import { withStructuredOutputRetry } from "./structured-output.ts";
+import { mergeListedTasks } from "./task-list.ts";
 
 // Two models, split by what the call actually needs.
 //
@@ -33,6 +35,13 @@ let client: Anthropic | undefined;
 function anthropic(): Anthropic {
   if (!client) client = new Anthropic({ apiKey: sharedEnv.ANTHROPIC_API_KEY });
   return client;
+}
+
+async function withModelTimeout<T>(milliseconds: number, work: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error("model request timed out")), milliseconds);
+  try { return await work(controller.signal); }
+  finally { clearTimeout(timer); }
 }
 
 /**
@@ -107,6 +116,9 @@ Replying:
   have, and don't push them to act on something they didn't ask about.
 - Never tell the student something changed unless a tool call confirmed it. If a tool
   reports a failure, say what went wrong instead of claiming success.
+- When they ask to save multiple tasks, put every listed task in save_note.deadlines,
+  including tasks with no date. Never select only the final bullet. Parenthetical shorthand
+  such as EOD or EOW is part of the task unless the date can be resolved without guessing.
 - After a successful mutation, use the tool result's confirmation facts and stop. Do not recap
   unrelated deadlines, places, or earlier messages.
 
@@ -179,7 +191,7 @@ export async function respond(input: {
   // Bounded so a confused model can't spin. The deepest real path is one
   // change then a reply — two iterations.
   for (let iteration = 0; iteration < 4; iteration++) {
-    const response = await anthropic().messages.create({
+    const response = await withModelTimeout(60_000, (signal) => anthropic().messages.create({
       model: FAST,
       max_tokens: 1500,
       system:
@@ -188,7 +200,7 @@ export async function respond(input: {
       tools: [...input.tools, REPLY_TOOL],
       tool_choice: { type: "any" },
       messages,
-    });
+    }, { signal }));
 
     const toolUses = response.content.filter(
       (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
@@ -197,6 +209,7 @@ export async function respond(input: {
 
     const replies = toolUses.filter((use) => use.name === "reply");
     const actions = toolUses.filter((use) => use.name !== "reply");
+    const mutations = actions.filter((use) => MUTATION_TOOLS.has(use.name));
 
     // A reply with no pending actions is the terminal state.
     const reply = replies[0];
@@ -221,13 +234,32 @@ export async function respond(input: {
       continue;
     }
 
+    // A single natural-language request is one mutation command. Executing two
+    // model-selected writes before either result is visible can duplicate a
+    // complete task list or apply conflicting reminder changes. Reject the
+    // whole batch and let the model choose exactly one command on repair.
+    if (mutations.length > 1) {
+      messages.push({ role: "assistant", content: response.content });
+      messages.push({
+        role: "user",
+        content: toolUses.map((use): Anthropic.ToolResultBlockParam => ({
+          type: "tool_result",
+          tool_use_id: use.id,
+          content: "NOT RUN — choose exactly one change tool for this message, then wait for its result before replying.",
+        })),
+      });
+      continue;
+    }
+
     messages.push({ role: "assistant", content: response.content });
 
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const use of actions) {
       let content: string;
       try {
-        content = await input.runTool(use.name, (use.input ?? {}) as Record<string, unknown>);
+        const rawInput = (use.input ?? {}) as Record<string, unknown>;
+        const toolInput = use.name === "save_note" ? mergeListedTasks(input.text, rawInput) : rawInput;
+        content = await input.runTool(use.name, toolInput);
       } catch (error) {
         // Hand the failure back rather than throwing — the model can tell the
         // student something useful instead of the turn dying. Never give raw
@@ -361,7 +393,7 @@ export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnaly
   const now = today(input.timezone);
 
   return withStructuredOutputRetry(async (attempt) => {
-    const response = await anthropic().messages.parse({
+    const response = await withModelTimeout(240_000, (signal) => anthropic().messages.parse({
       model: READER,
       max_tokens: 8000, // thinking + analysis share this ceiling
       system: READER_SYSTEM,
@@ -394,7 +426,7 @@ export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnaly
         },
       ],
       output_config: { effort: READER_EFFORT, format: zodOutputFormat(ArtifactAnalysisBatch) },
-    });
+    }, { signal }));
 
     return parsedOrThrow(response, "analyzeArtifact").items;
   }, "analyzeArtifact");

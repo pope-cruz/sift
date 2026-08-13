@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 
+import { safeDiagnostic } from "./diagnostics.ts";
 import { sharedEnv } from "./env.ts";
 import { localInstant } from "./dates.ts";
 import type {
@@ -10,10 +11,37 @@ import type {
 } from "./planner.ts";
 import { REMINDER_CLAIMED_STATUS, type ReminderClaim } from "./reminders.ts";
 import { storedDueTime } from "./stored-deadlines.ts";
+import type { PendingReminderState } from "./reminder-delta.ts";
+import { isMissingSchemaFeature } from "./schema-compat.ts";
 
 export const db = createClient(sharedEnv.SUPABASE_URL, sharedEnv.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
+
+export async function recordJobFailure(input: {
+  stage: string;
+  resourceId?: string;
+  error: unknown;
+}): Promise<void> {
+  const diagnostic = safeDiagnostic(input.error);
+  try {
+    const { error } = await db.from("job_failures").insert({
+      stage: input.stage.slice(0, 120),
+      resource_id: input.resourceId?.slice(0, 240) ?? null,
+      error_code: diagnostic.code,
+      detail: diagnostic,
+    });
+    if (error) throw error;
+  } catch (error) {
+    console.error("failed to persist job failure", { stage: input.stage, error: safeDiagnostic(error) });
+  }
+}
+
+export async function cleanupJobFailures(retentionDays = 30): Promise<void> {
+  const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60_000).toISOString();
+  const { error } = await db.from("job_failures").delete().lt("created_at", cutoff);
+  if (error) throw error;
+}
 
 export type Student = {
   id: string;
@@ -72,21 +100,50 @@ export async function recordMessage(input: {
   direction: string;
   content: string | null;
 }): Promise<boolean> {
-  const { data, error } = await db
+  const row = {
+    student_id: input.studentId,
+    photon_message_id: input.photonMessageId,
+    direction: input.direction,
+    content: input.content,
+  };
+  let result = await db
     .from("messages")
     .upsert(
       {
-        student_id: input.studentId,
-        photon_message_id: input.photonMessageId,
-        direction: input.direction,
-        content: input.content,
+        ...row,
+        processing_status: input.direction === "inbound" ? "pending" : "complete",
       },
       { onConflict: "photon_message_id", ignoreDuplicates: true },
     )
     .select("id");
 
+  // Keep the worker usable while the additive migration is being rolled out.
+  // Missing-column errors reject before the insert, so this retry cannot write
+  // the same message twice.
+  if (result.error && isMissingSchemaFeature(result.error, ["processing_status"])) {
+    result = await db
+      .from("messages")
+      .upsert(row, { onConflict: "photon_message_id", ignoreDuplicates: true })
+      .select("id");
+  }
+  if (result.error) throw result.error;
+  return (result.data?.length ?? 0) > 0;
+}
+
+export async function claimInboundMessage(photonMessageId: string, legacyClaim = true): Promise<boolean> {
+  const { data, error } = await db.rpc("claim_inbound_message", { p_message_id: photonMessageId });
+  if (error && isMissingSchemaFeature(error, ["claim_inbound_message"])) return legacyClaim;
   if (error) throw error;
-  return (data?.length ?? 0) > 0;
+  return data === true;
+}
+
+export async function finishInboundMessage(photonMessageId: string, succeeded: boolean): Promise<void> {
+  const { error } = await db.rpc("finish_inbound_message", {
+    p_message_id: photonMessageId,
+    p_succeeded: succeeded,
+  });
+  if (error && isMissingSchemaFeature(error, ["finish_inbound_message"])) return;
+  if (error) throw error;
 }
 
 /**
@@ -175,6 +232,115 @@ export type ActionInput = {
   /** `open` is trackable work; `reference` is remembered but never reminded on. */
   status?: "open" | "reference";
 };
+
+export async function saveNoteAtomic(input: {
+  studentId: string;
+  sourceMessageId: string;
+  title: string;
+  summary: string;
+  extractedText: string;
+  actions: ActionInput[];
+}): Promise<{ itemId: string; duplicate: boolean }> {
+  const { data, error } = await db.rpc("save_note_with_actions", {
+    p_student_id: input.studentId,
+    p_source_message_id: input.sourceMessageId,
+    p_title: input.title,
+    p_summary: input.summary,
+    p_extracted_text: input.extractedText,
+    p_actions: input.actions.map((action) => ({
+      description: action.description,
+      due_date: action.dueDate,
+      remind_at: action.remindAt,
+      status: action.status ?? "open",
+    })),
+  });
+  if (error && isMissingSchemaFeature(error, ["save_note_with_actions", "source_message_id"])) {
+    const itemId = await insertItem({
+      studentId: input.studentId,
+      type: "note",
+      title: input.title,
+      summary: input.summary,
+      extractedText: input.extractedText,
+      category: "note",
+    });
+    try {
+      await insertActions(input.studentId, itemId, input.actions);
+      return { itemId, duplicate: false };
+    } catch (fallbackError) {
+      await deleteItemCascade(input.studentId, itemId).catch((cleanupError) => {
+        console.error("failed to compensate legacy note write", safeDiagnostic(cleanupError));
+      });
+      throw fallbackError;
+    }
+  }
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row?.item_id) throw new Error("The note transaction returned no item.");
+  return { itemId: row.item_id, duplicate: row.duplicate === true };
+}
+
+export async function saveIngestItemAtomic(input: {
+  studentId: string;
+  sourceMessageId: string;
+  type: string;
+  title: string | null;
+  summary: string;
+  extractedText: string | null;
+  category: string | null;
+  filename: string;
+  mimeType: string;
+  storagePath: string;
+  actions: ActionInput[];
+}): Promise<{ itemId: string; duplicate: boolean }> {
+  const { data, error } = await db.rpc("save_ingest_item", {
+    p_student_id: input.studentId,
+    p_source_message_id: input.sourceMessageId,
+    p_type: input.type,
+    p_title: input.title,
+    p_summary: input.summary,
+    p_extracted_text: input.extractedText,
+    p_category: input.category,
+    p_filename: input.filename,
+    p_mime_type: input.mimeType,
+    p_storage_path: input.storagePath,
+    p_actions: input.actions.map((action) => ({
+      description: action.description,
+      due_date: action.dueDate,
+      remind_at: action.remindAt,
+      status: action.status ?? "open",
+    })),
+  });
+  if (error && isMissingSchemaFeature(error, ["save_ingest_item", "source_message_id"])) {
+    const itemId = await insertItem({
+      studentId: input.studentId,
+      type: input.type,
+      title: input.title,
+      summary: input.summary,
+      extractedText: input.extractedText,
+      category: input.category,
+    });
+    try {
+      await recordAttachment({
+        studentId: input.studentId,
+        itemId,
+        filename: input.filename,
+        mimeType: input.mimeType,
+        storagePath: input.storagePath,
+      });
+      await insertActions(input.studentId, itemId, input.actions);
+      return { itemId, duplicate: false };
+    } catch (fallbackError) {
+      await deleteItemCascade(input.studentId, itemId).catch((cleanupError) => {
+        console.error("failed to compensate legacy ingest write", safeDiagnostic(cleanupError));
+      });
+      throw fallbackError;
+    }
+  }
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row?.item_id) throw new Error("The ingest transaction returned no item.");
+  return { itemId: row.item_id, duplicate: row.duplicate === true };
+}
 
 /** Returns the new row ids, in the order given. */
 export async function insertActions(
@@ -356,6 +522,7 @@ export type SavedItem = {
     description: string;
     due_date: string | null;
     due_time: string | null;
+    remind_at: string | null;
     status: string;
   }[];
 };
@@ -374,7 +541,7 @@ export async function listSavedItems(studentId: string, limit = 20): Promise<Sav
 
   const actions = await db
     .from("actions")
-    .select("id, item_id, description, due_date, status")
+    .select("id, item_id, description, due_date, remind_at, status")
     .eq("student_id", studentId)
     .in(
       "item_id",
@@ -540,6 +707,22 @@ export async function nextPendingReminder(studentId: string): Promise<{ actionId
     .maybeSingle();
   if (result.error) throw result.error;
   return result.data?.remind_at ? { actionId: result.data.id, targetTime: result.data.remind_at } : null;
+}
+
+export async function listPendingReminders(studentId: string): Promise<PendingReminderState[]> {
+  const result = await db
+    .from("actions")
+    .select("id, remind_at")
+    .eq("student_id", studentId)
+    .eq("status", "open")
+    .eq("reminder_sent", false)
+    .not("remind_at", "is", null)
+    .not("due_date", "is", null)
+    .order("remind_at", { ascending: true });
+  if (result.error) throw result.error;
+  return result.data.flatMap((row) => row.remind_at
+    ? [{ actionId: row.id, targetTime: row.remind_at }]
+    : []);
 }
 
 export async function markReminderDelivered(claim: ReminderClaim): Promise<void> {

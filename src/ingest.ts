@@ -16,14 +16,12 @@
 import sharp from "sharp";
 
 import { aggregate, type AdmissionContext } from "./analysis.ts";
-import { today } from "./dates.ts";
+import { friendly, today } from "./dates.ts";
 import { InputDiagnosticError, safeDiagnostic } from "./diagnostics.ts";
 import {
   deleteAttachmentBytes,
   deleteItemCascade,
-  insertActions,
-  insertItem,
-  recordAttachment,
+  saveIngestItemAtomic,
   uploadAttachmentBytes,
   type Student,
 } from "./db.ts";
@@ -100,6 +98,8 @@ async function ingestArtifact(
   file: TurnAttachment,
   caption: string,
   captionScope: AdmissionContext["captionScope"],
+  sourceMessageId: string,
+  persist: boolean,
 ): Promise<string> {
   // `size` is optional on the provider's attachment, so it's a cheap early
   // out, not the check itself — the real one is on the bytes we actually got.
@@ -119,27 +119,27 @@ async function ingestArtifact(
 
   // The upload needs nothing from the analysis, and the student is waiting on
   // the analysis alone — so pay for them once, not back to back.
-  const prepared = await settleArtifactPreparation({
-    analysis: timed("analyze", () =>
-      analyzeArtifact({
+  const analysisWork = timed("analyze", () =>
+    analyzeArtifact({
         bytes: forModel.bytes,
         mimeType: forModel.mimeType,
         filename: file.name,
         caption,
         timezone: student.timezone,
-      }),
-    ),
-    // The full-resolution original goes to storage, not the shrunken copy.
-    upload: timed("upload", () =>
-      uploadAttachmentBytes({
+      }));
+  const prepared = persist
+    ? await settleArtifactPreparation({
+        analysis: analysisWork,
+        // The full-resolution original goes to storage, not the shrunken copy.
+        upload: timed("upload", () => uploadAttachmentBytes({
         studentId: student.id,
         filename: file.name,
         mimeType: file.mimeType,
         bytes,
-      }),
-    ),
-    deleteUpload: deleteAttachmentBytes,
-  });
+        })),
+        deleteUpload: deleteAttachmentBytes,
+      })
+    : { analysis: await analysisWork, storagePath: null };
   const { analysis: analyses, storagePath } = prepared;
 
   // Everything below is deterministic. The model has had its say; from here the
@@ -154,6 +154,19 @@ async function ingestArtifact(
 
   const results = analyses.map((analysis) => aggregate(analysis, context));
 
+  if (!persist) {
+    return results.map((result) => {
+      const dates = result.actions
+        .filter((action) => action.dueDate)
+        .slice(0, 4)
+        .map((action) => `${action.description} (${friendly(action.dueDate!, student.timezone)})`);
+      return [result.item.summary, dates.length ? `Dates: ${dates.join(", ")}.` : ""]
+        .filter(Boolean)
+        .join(" ");
+    }).join(" ");
+  }
+  if (!storagePath) throw new Error("Attachment storage did not complete.");
+
   for (const result of results) {
     for (const decision of result.decisions) {
       console.log(
@@ -166,27 +179,28 @@ async function ingestArtifact(
   // One attachment can yield several isolated items. If any write fails, roll
   // every item from this attachment back so a resend cannot duplicate a subset.
   const itemIds: string[] = [];
+  let createdAny = false;
   try {
-    for (const result of results) {
-      const itemId = await insertItem({
+    for (const [index, result] of results.entries()) {
+      const saved = await saveIngestItemAtomic({
         studentId: student.id,
+        sourceMessageId: `${sourceMessageId}:${index}`,
         type: result.item.type,
         title: result.item.title,
         summary: result.item.summary,
         extractedText: result.item.extractedText,
         category: result.item.category,
-      });
-      itemIds.push(itemId);
-
-      await recordAttachment({
-        studentId: student.id,
-        itemId,
         filename: file.name,
         mimeType: file.mimeType,
         storagePath,
+        actions: result.actions,
       });
-      await insertActions(student.id, itemId, result.actions);
+      if (!saved.duplicate) {
+        createdAny = true;
+        itemIds.push(saved.itemId);
+      }
     }
+    if (!createdAny) await deleteAttachmentBytes(storagePath);
   } catch (error) {
     const cleanupFailures = await rollbackArtifact({
       itemIds,
@@ -216,6 +230,7 @@ export async function ingest(input: {
   student: Student;
   text: string;
   files: TurnAttachment[];
+  sourceMessageId?: string;
 }): Promise<string> {
   const started = Date.now();
   try {
@@ -229,13 +244,15 @@ async function route(input: {
   student: Student;
   text: string;
   files: TurnAttachment[];
+  sourceMessageId?: string;
 }): Promise<string> {
   const { student, text } = input;
   const files = uniqueAttachments(input.files);
 
   const replies: string[] = [];
+  const persist = !/\b(?:do not|don['’]?t) save\b|\bjust (?:read|summarize|tell me|answer)\b|\bwithout saving\b/i.test(text);
 
-  for (const file of files) {
+  for (const [fileIndex, file] of files.entries()) {
     // The only decision MIME type gets to make: can the model read these bytes,
     // and as which block type. What the content *means* is decided downstream.
     const kind = classifyInputMime(file.mimeType);
@@ -247,6 +264,8 @@ async function route(input: {
             file,
             text,
             files.length === 1 ? "single_artifact" : "multi_artifact_turn",
+            `${input.sourceMessageId ?? "attachment"}:${file.id}:${fileIndex}`,
+            persist,
           ),
         );
       } catch (error) {

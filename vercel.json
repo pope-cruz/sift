@@ -5,6 +5,16 @@
       "maxDuration": 300
     }
   },
+  "headers": [
+    {
+      "source": "/demo/:path*",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co; img-src 'self' data: blob:; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" },
+        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" },
+        { "key": "X-Frame-Options", "value": "DENY" }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/api/demo/:path*", "destination": "/api/demo?route=:path*" },
     { "source": "/demo", "destination": "/web/demo/index.html" },

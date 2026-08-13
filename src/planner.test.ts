@@ -194,6 +194,32 @@ test("plural retrieval returns supported results instead of treating them as amb
   assert.equal(result.request.candidateItemIds.length, 2);
 });
 
+test("a complete task-list request preserves dated and undated tasks", () => {
+  const taskList = item({
+    id: "task-list",
+    title: "Task list",
+    summary: "Tasks: Email Jen; Email Carys; Eat dinner",
+    type: "note",
+  });
+  const result = context("List every task from the task list I just saved.", {
+    items: [taskList],
+    actions: [
+      action({ id: "jen", itemId: "task-list", description: "Email Jen about work", due: "2026-08-13" }),
+      action({ id: "carys", itemId: "task-list", description: "Email Carys about work", due: "2026-08-14" }),
+      action({ id: "dinner", itemId: "task-list", description: "Eat dinner", due: null }),
+    ],
+  });
+
+  assert.equal(result.request.intent, "retrieve");
+  const answer = fallbackReply(result);
+  assert.match(answer, /3 tasks/);
+  assert.match(answer, /Email Jen about work/);
+  assert.match(answer, /Email Carys about work/);
+  assert.match(answer, /Eat dinner/);
+  assert.match(validateReply(result, "Email Jen about work and Email Carys about work.") ?? "", /Eat dinner/);
+  assert.equal(validateReply(result, answer), null);
+});
+
 test("friendly questions remain chitchat rather than false retrieval misses", () => {
   const result = context("How are you?", { items: [PROJECT] });
   assert.equal(result.request.intent, "chitchat");

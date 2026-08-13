@@ -8,6 +8,7 @@ import {
   claimDueReminders,
   markReminderDelivered,
   recordMessage,
+  recordJobFailure,
   releaseReminderForRetry,
 } from "./db.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
@@ -71,6 +72,7 @@ export async function runProductionReminderBatch(
         actionId: claim.actionId,
         error: safeDiagnostic(error),
       });
+      void recordJobFailure({ stage: `reminder.${stage}`, resourceId: claim.actionId, error });
     },
   });
 }

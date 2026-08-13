@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { db, getStudentById, type Student } from "./db.ts";
+import { cleanupJobFailures, db, getStudentById, type Student } from "./db.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
 import { getDemoEnv } from "./env.ts";
 import {
@@ -288,6 +288,22 @@ export async function consumeDemoUpload(uploadId: string): Promise<void> {
   if (updated.error) throw updated.error;
 }
 
+export async function releaseDemoUpload(input: { token: string; uploadId: string }): Promise<void> {
+  const result = await db.rpc("release_demo_upload", {
+    p_token_hash: hashDemoToken(input.token),
+    p_upload_id: input.uploadId,
+  });
+  if (result.error) throw result.error;
+  const storagePath = result.data?.[0]?.storage_path;
+  if (!storagePath) return;
+  const removed = await db.storage.from("attachments").remove([storagePath]);
+  if (removed.error) {
+    // The refunded row deliberately remains as a cleanup pointer. A transient
+    // Storage failure must not take quota away from the browser again.
+    console.error("failed to remove refunded demo upload", safeDiagnostic(removed.error));
+  }
+}
+
 async function demoStoragePaths(studentId: string, sessionId: string): Promise<string[]> {
   const [attachments, uploads] = await Promise.all([
     db.from("attachments").select("storage_path").eq("student_id", studentId),
@@ -303,9 +319,41 @@ export async function saveDemoTurn(input: { turnId: string; events: DemoEvent[];
     events: input.events,
     status: input.status,
     failure_code: input.failureCode ?? null,
+    lease_expires_at: input.status === "processing"
+      ? new Date(Date.now() + 5 * 60_000).toISOString()
+      : null,
     updated_at: new Date().toISOString(),
   }).eq("id", input.turnId);
   if (result.error) throw result.error;
+}
+
+export async function resetDemoSession(token: string): Promise<DemoSessionState> {
+  const session = await findSession(token);
+  if (!session) throw new DemoError("SESSION_EXPIRED", "This demo has expired. Start a new one to keep going.", 401);
+  const paths = await demoStoragePaths(session.student_id, session.id);
+  if (paths.length) {
+    const removed = await db.storage.from("attachments").remove(paths);
+    if (removed.error) throw removed.error;
+  }
+
+  const nextToken = newDemoToken();
+  const result = await db.rpc("reset_demo_session", {
+    p_token_hash: hashDemoToken(token),
+    p_new_token_hash: hashDemoToken(nextToken),
+  });
+  if (result.error) throw result.error;
+  const row = result.data?.[0];
+  if (!row) throw new Error("The demo session was not reset.");
+  return {
+    token: nextToken,
+    expiresAt: row.expires_at,
+    quota: {
+      turnsRemaining: DEMO_LIMITS.turns,
+      attachmentTurnsRemaining: DEMO_LIMITS.attachmentTurns,
+      bytesRemaining: DEMO_LIMITS.totalBytes,
+    },
+    transcript: [],
+  };
 }
 
 export async function deleteDemoSession(token: string): Promise<void> {
@@ -320,23 +368,33 @@ export async function deleteDemoSession(token: string): Promise<void> {
   if (deleted.error) throw deleted.error;
 }
 
-export async function cleanupExpiredDemoSessions(limit = 100): Promise<number> {
+export async function cleanupExpiredDemoSessions(limit = 500): Promise<number> {
+  await cleanupJobFailures().catch((error) => {
+    console.error("job failure retention cleanup failed", safeDiagnostic(error));
+  });
   const oldIssuances = await db.from("demo_session_issuances").delete().lt("created_at", new Date(Date.now() - 24 * 60 * 60_000).toISOString());
   if (oldIssuances.error) throw oldIssuances.error;
-  const expired = await db.from("demo_sessions").select("token_hash").lte("expires_at", new Date().toISOString()).limit(limit);
+  const expired = await db.from("demo_sessions").select("id, student_id").lte("expires_at", new Date().toISOString()).limit(limit);
   if (expired.error) throw expired.error;
-  for (const row of expired.data) {
-    // Use the hash directly because expired sessions are intentionally not authenticatable.
-    const session = await db.from("demo_sessions").select("id, student_id").eq("token_hash", row.token_hash).maybeSingle();
-    if (session.error) throw session.error;
-    if (!session.data) continue;
-    const paths = await demoStoragePaths(session.data.student_id, session.data.id);
-    if (paths.length) {
-      const removed = await db.storage.from("attachments").remove(paths);
-      if (removed.error) throw removed.error;
-    }
-    const deleted = await db.from("students").delete().eq("id", session.data.student_id).eq("channel", "web_demo");
-    if (deleted.error) throw deleted.error;
+  let deletedCount = 0;
+  for (let index = 0; index < expired.data.length; index += 10) {
+    const batch = expired.data.slice(index, index + 10);
+    const settled = await Promise.allSettled(batch.map(async (session) => {
+      const paths = await demoStoragePaths(session.student_id, session.id);
+      if (paths.length) {
+        const removed = await db.storage.from("attachments").remove(paths);
+        if (removed.error) throw removed.error;
+      }
+      const deleted = await db.from("students").delete().eq("id", session.student_id).eq("channel", "web_demo");
+      if (deleted.error) throw deleted.error;
+    }));
+    settled.forEach((result, offset) => {
+      if (result.status === "fulfilled") deletedCount += 1;
+      else console.error("expired demo cleanup failed", {
+        sessionId: batch[offset]?.id,
+        error: safeDiagnostic(result.reason),
+      });
+    });
   }
-  return expired.data.length;
+  return deletedCount;
 }

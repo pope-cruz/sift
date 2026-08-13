@@ -340,11 +340,7 @@ summary::-webkit-details-marker{display:none}
       { at: 500,  kind: 'file', side: 'user', name: 'CSCI-UA 201 Syllabus.pdf', meta: 'PDF · 8 pages' },
       { at: 1150, kind: 'msg',  side: 'user', text: 'Find the important deadlines in this syllabus.' },
       { at: 2000, kind: 'typing', side: 'sift' },
-      { at: 4100, kind: 'msg',  side: 'sift', text: 'I found 4 upcoming deadlines. The first is Project 1 on Monday, August 17.' },
-      { at: 4900, kind: 'list', side: 'sift', items: [
-        { t: 'Project 1', d: 'Mon, Aug 17' }, { t: 'Quiz 2', d: 'Fri, Aug 21' },
-        { t: 'Midterm', d: 'Thu, Sep 10' }, { t: 'Project 2', d: 'Mon, Sep 28' } ] },
-      { at: 5700, kind: 'chip', side: 'sift', text: 'Course schedule · page 6' }
+      { at: 4100, kind: 'msg',  side: 'sift', text: 'Got it — Project 1 is due Mon, Aug 17; Quiz 2 Fri, Aug 21; Midterm Thu, Sep 10; and Project 2 Mon, Sep 28.' }
     ]},
     { key: 'cafe', label: 'Remember this café', steps: [
       { at: 450,  kind: 'preview', side: 'user', title: 'Radio Bakery', sub: 'radiobakery · Greenpoint, Brooklyn', tag: 'instagram.com' },
@@ -360,10 +356,7 @@ summary::-webkit-details-marker{display:none}
       { at: 450,  kind: 'job', side: 'user', title: 'Product Design Intern', sub: 'Northline Labs · New York, NY', meta: 'Applications close Aug 24' },
       { at: 1200, kind: 'msg', side: 'user', text: 'I want to apply here. Remind me in a week to finish it and the other job application.' },
       { at: 2300, kind: 'typing', side: 'sift' },
-      { at: 4200, kind: 'msg', side: 'sift', text: 'Done — I’ll remind you next Wednesday to finish both applications.' },
-      { at: 5000, kind: 'tasks', side: 'sift', items: [
-        { t: 'Finish Northline Labs application', d: 'Wed, Aug 19 · 10:00 AM' },
-        { t: 'Finish Ramp PM internship application', d: 'Wed, Aug 19 · 10:00 AM' } ] }
+      { at: 4200, kind: 'msg', side: 'sift', text: 'Done — I’ll remind you next Wednesday at 10:00 AM to finish the Northline Labs and Ramp applications.' }
     ]}
   ];
 
@@ -440,52 +433,42 @@ summary::-webkit-details-marker{display:none}
           + '<span style="font-size:12px;color:var(--accent);padding-top:4px">' + esc(s.meta) + '</span>'
           + '</span></span>';
 
-      case 'list':
-        return '<span style="display:flex;flex-direction:column;width:296px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:12px;overflow:hidden">'
-          + s.items.map(function (it) {
-              return '<span style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;border-bottom:1px solid #E9E5DB">'
-                + '<span style="font-size:14px">' + esc(it.t) + '</span>'
-                + '<span style="font-size:12.5px;color:#817E76;white-space:nowrap">' + esc(it.d) + '</span></span>';
-            }).join('')
-          + '</span>';
-
-      case 'tasks':
-        return '<span style="display:flex;flex-direction:column;width:300px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:12px;overflow:hidden">'
-          + s.items.map(function (it) {
-              return '<span style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:1px solid #E9E5DB">'
-                + '<span style="flex:none;width:15px;height:15px;border-radius:4px;border:1.5px solid #C2BEB4"></span>'
-                + '<span style="display:flex;flex-direction:column;gap:2px">'
-                + '<span style="font-size:14px">' + esc(it.t) + '</span>'
-                + '<span style="font-size:12px;color:#817E76">' + esc(it.d) + '</span>'
-                + '</span></span>';
-            }).join('')
-          + '</span>';
-
-      case 'chip':
-        return '<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:#817E76;padding:2px 2px 0;animation:sift-rise 340ms ease both">'
-          + '<span style="width:5px;height:5px;border-radius:50%;background:var(--accent)"></span>' + esc(s.text) + '</span>';
-
       default:
         return '';
     }
   }
 
-  function render(shown) {
-    var steps = cur().steps.slice(0, shown);
-    // only the most recent typing indicator stays on screen
-    steps = steps.filter(function (s, i) { return s.kind !== 'typing' || i === steps.length - 1; });
-    innerEl.innerHTML = steps.map(function (s) {
-      var user = s.side === 'user';
-      var justify = s.kind === 'divider' ? 'center' : (user ? 'flex-end' : 'flex-start');
-      var align = user ? 'flex-end' : 'flex-start';
-      return '<div style="display:flex;justify-content:' + justify + ';animation:sift-rise 400ms cubic-bezier(.2,.78,.25,1) both">'
-        + '<div style="max-width:88%;display:flex;flex-direction:column;align-items:' + align + ';gap:7px">'
-        + body(s) + '</div></div>';
-    }).join('');
+  var typingEl = null;
+
+  function pinThread() {
     var pin = function () { threadEl.scrollTop = threadEl.scrollHeight; };
     pin();
     requestAnimationFrame(pin);
-    setTimeout(pin, 120);
+  }
+
+  function clearThread() {
+    innerEl.replaceChildren();
+    typingEl = null;
+  }
+
+  function appendStep(s, animate) {
+    // Typing is a temporary state, not part of the conversation history.
+    if (typingEl) {
+      typingEl.remove();
+      typingEl = null;
+    }
+
+    var user = s.side === 'user';
+    var justify = s.kind === 'divider' ? 'center' : (user ? 'flex-end' : 'flex-start');
+    var align = user ? 'flex-end' : 'flex-start';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;justify-content:' + justify;
+    if (animate) row.style.animation = 'sift-rise 220ms cubic-bezier(.23,1,.32,1) both';
+    row.innerHTML = '<div style="max-width:88%;display:flex;flex-direction:column;align-items:' + align + ';gap:7px">'
+      + body(s) + '</div>';
+    innerEl.appendChild(row);
+    if (s.kind === 'typing') typingEl = row;
+    pinThread();
   }
 
   function paintTabs() {
@@ -502,10 +485,13 @@ summary::-webkit-details-marker{display:none}
     active = key;
     paintTabs();
     var sc = cur();
-    if (reduced) { render(sc.steps.length); return; }
-    render(0);
-    sc.steps.forEach(function (s, i) {
-      timers.push(setTimeout(function () { render(i + 1); }, s.at));
+    clearThread();
+    if (reduced) {
+      sc.steps.forEach(function (s) { appendStep(s, false); });
+      return;
+    }
+    sc.steps.forEach(function (s) {
+      timers.push(setTimeout(function () { appendStep(s, true); }, s.at));
     });
   }
 
@@ -515,16 +501,18 @@ summary::-webkit-details-marker{display:none}
     btn.className = 'tab';
     btn.setAttribute('data-key', s.key);
     btn.textContent = s.label;
-    btn.style.cssText = 'flex:none;cursor:pointer;white-space:nowrap;font-size:13.5px;font-weight:500;padding:8px 14px;border-radius:8px;border:none;transition:background 280ms ease,color 280ms ease';
+    btn.style.cssText = 'flex:none;cursor:pointer;white-space:nowrap;font-size:13.5px;font-weight:500;padding:8px 14px;border-radius:8px;border:none;transition:background 160ms ease,color 160ms ease';
     btn.addEventListener('click', function () { started = true; start(s.key); });
     tabsEl.appendChild(btn);
   });
   paintTabs();
-  render(0);
+  clearThread();
 
   replayEl.addEventListener('click', function () { started = true; start(active); });
   Array.prototype.forEach.call(document.querySelectorAll('[data-try]'), function (el) {
-    el.addEventListener('click', function () { started = true; start(active); });
+    el.addEventListener('click', function () {
+      if (!started) { started = true; start(active); }
+    });
   });
 
   // ---- scroll reveals ------------------------------------------------------

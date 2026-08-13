@@ -1,5 +1,5 @@
 export type RoutingChannel = {
-  send(text: string): Promise<void>;
+  send(text: string, options?: { transient?: boolean }): Promise<void>;
   responding<T>(work: () => Promise<T>): Promise<T>;
 };
 
@@ -15,7 +15,7 @@ export async function routeActiveTurn(input: {
   answer(): Promise<string>;
 }): Promise<void> {
   if (input.attachmentCount > 0) {
-    await input.channel.send("Sifting...");
+    await input.channel.send("Sifting...", { transient: true });
     await input.channel.responding(async () => input.channel.send(await input.ingest()));
     return;
   }

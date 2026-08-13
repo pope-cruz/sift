@@ -22,6 +22,28 @@ test("session and quota mutations lock rows and are unavailable to browser roles
   assert.match(schema, /revoke all on function claim_demo_turn[^\n]+public, anon, authenticated/);
 });
 
+test("failed turns, uploads, resets, and mutations have durable recovery boundaries", () => {
+  assert.match(schema, /lease_expires_at timestamptz/);
+  assert.match(schema, /t\.status = 'failed'[\s\S]+attempt_count = attempt_count \+ 1/);
+  assert.match(schema, /create or replace function release_demo_upload[\s\S]+attachment_turns_used = greatest/);
+  assert.match(schema, /create or replace function reset_demo_session[\s\S]+turns_used = 0/);
+  assert.match(schema, /create or replace function save_note_with_actions[\s\S]+pg_advisory_xact_lock/);
+  assert.match(schema, /create or replace function save_ingest_item[\s\S]+insert into attachments[\s\S]+insert into actions/);
+});
+
+test("Spectrum inbound messages have reclaimable processing state", () => {
+  assert.match(schema, /processing_status text not null default 'complete'/);
+  assert.match(schema, /create or replace function claim_inbound_message[\s\S]+processing_status in \('pending', 'failed'\)/);
+  assert.match(schema, /create or replace function finish_inbound_message/);
+});
+
+test("worker failures have a private retained audit trail", () => {
+  assert.match(schema, /create table if not exists job_failures/);
+  assert.match(schema, /alter table job_failures enable row level security/);
+  assert.match(dbSource, /recordJobFailure/);
+  assert.match(dbSource, /cleanupJobFailures/);
+});
+
 test("reminder claims retain explicit production and authenticated web scopes", () => {
   assert.match(dbSource, /scope: \{ channel: Student\["channel"\]; studentId\?: string \}/);
   assert.match(dbSource, /channel: "imessage"/);

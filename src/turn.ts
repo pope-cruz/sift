@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import type { Message, Space } from "spectrum-ts";
 
@@ -49,10 +49,17 @@ export async function say(space: Space, studentId: string | null, text: string) 
 
 const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
 
-export async function handleTurn(space: Space, message: Message, student: Student | null) {
-  const contents = parts(message);
-  const text = textOf(contents);
-  const files = attachmentsOf(contents);
+export async function handleTurnBatch(
+  space: Space,
+  messages: Message[],
+  student: Student | null,
+  isSuperseded: () => boolean = () => false,
+): Promise<boolean> {
+  if (messages.length === 0) return true;
+  const messageIds = messages.map((message) => message.id);
+  const turnId = messages.length === 1
+    ? messageIds[0]!
+    : `batch-${createHash("sha256").update(messageIds.join("\u0000")).digest("hex")}`;
 
   // Hoisted so the catch can attribute the failure reply to the student the
   // turn was for, including the turn that just onboarded them.
@@ -60,35 +67,48 @@ export async function handleTurn(space: Space, message: Message, student: Studen
 
   try {
     if (!current) {
-      if (!isStart(text)) {
+      const startIndex = messages.findIndex((message) => isStart(textOf(parts(message))));
+      if (startIndex < 0) {
         await say(space, null, "Text me “Start Sift” to get going.");
-        return;
+        return true;
       }
 
       current = await attachSpaceToStudent(env.DEMO_PHONE, space.id);
-      await backfillMessageStudent(message.id, current.id);
+      await Promise.all(messageIds.map((messageId) => backfillMessageStudent(messageId, current!.id)));
       await say(space, current.id, WELCOME); // Text-only, no links — first-contact deliverability.
-      return;
+      messages = messages.filter((_, index) => index !== startIndex);
+      if (messages.length === 0) return true;
     }
 
+    const contents = messages.flatMap((message) => parts(message));
+    const text = messages
+      .map((message) => textOf(parts(message)).trim())
+      .filter(Boolean)
+      .join("\n");
+    const files = attachmentsOf(contents);
     const active = current;
     await processTurn({
       student: active,
-      turn: { id: message.id, text, attachments: files },
+      turn: { id: turnId, text, attachments: files },
       channel: {
-        send: (reply) => say(space, active.id, reply),
+        send: async (reply) => {
+          if (isSuperseded()) return;
+          await say(space, active.id, reply);
+        },
         responding: (work) => space.responding(work),
       },
     });
+    return true;
   } catch (error) {
     console.error("turn failed", {
       spaceId: space.id,
-      messageId: message.id,
+      messageIds,
       error: safeDiagnostic(error),
     });
     // Through say(), so the failure is in the transcript. Sent bare, the next
     // turn's context has a gap where the apology was, and Sift answers "what
     // happened?" as though the turn never occurred.
     await sendRecovery((text) => say(space, current?.id ?? null, text));
+    return false;
   }
 }

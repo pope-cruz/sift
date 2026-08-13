@@ -7,18 +7,19 @@
 // conversation and picks an action, so "make the 2025 into 2026" and "cafe
 // recs?" work for the same reason a person would understand them.
 import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 
 import {
   cancelActionReminder,
   getItemEvidence,
-  insertActions,
-  insertItem,
   listSavedItems,
   rescheduleActionReminder,
   rescheduleActions,
+  saveNoteAtomic,
   type Student,
 } from "./db.ts";
-import { friendly, isIsoDate, localInstant, remindAtFor, today } from "./dates.ts";
+import { friendly, isIsoDate, localInstant } from "./dates.ts";
+import { scheduleTask } from "./task-scheduling.ts";
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -76,13 +77,16 @@ export const TOOLS: Anthropic.Tool[] = [
       "deadline that isn't already saved. Do not use this to record a change to " +
       "something that already exists; use update_dates or set_tracking for that. Do not " +
       "use it to record an answer to a question you just asked: that answer is about an " +
-      "item already in SAVED, so it belongs in the tool that changes that item.",
+      "item already in SAVED, so it belongs in the tool that changes that item. When the " +
+      "message contains a list of tasks, include every task in deadlines, including undated " +
+      "ones; never keep only the last list item.",
     input_schema: {
       type: "object",
       properties: {
-        title: { type: "string", description: "short label for the thing itself" },
+        title: { type: "string", maxLength: 120, description: "short label for the thing itself" },
         summary: {
           type: "string",
+          maxLength: 2000,
           description:
             "the substance in a sentence or two, in the student's own words. Write the thing " +
             'itself ("Chem midterm moved to the 14th"), not a description of who said it ' +
@@ -90,14 +94,16 @@ export const TOOLS: Anthropic.Tool[] = [
         },
         deadlines: {
           type: "array",
-          description: "anything they actually have to do, with a date when one was given",
+          maxItems: 20,
+          description: "every independent task they have to do, with a date when one was given; undated tasks still belong here",
           items: {
             type: "object",
             properties: {
-              description: { type: "string" },
-              due_date: { type: "string", description: "ISO yyyy-mm-dd, or omit if undated" },
+              description: { type: "string", maxLength: 240 },
+              due_date: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$", description: "ISO yyyy-mm-dd, or omit if undated" },
               due_time: {
                 type: "string",
+                pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$",
                 description: "24-hour HH:mm only when the student gave an exact time; otherwise omit",
               },
             },
@@ -177,6 +183,17 @@ function toolFailure(userMessage: string, needsClarification = false): string {
   return JSON.stringify({ ok: false, needs_clarification: needsClarification, user_message: userMessage });
 }
 
+const SaveNoteInput = z.object({
+  title: z.string().trim().min(1).max(120),
+  summary: z.string().trim().max(2000),
+  deadlines: z.array(z.object({
+    description: z.string().trim().min(1).max(240),
+    due_date: z.string().refine(isIsoDate, "invalid due date").optional(),
+    due_time: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).optional(),
+  })).max(20).default([]),
+  reminder_requested: z.boolean().default(false),
+});
+
 function naturalInstant(iso: string, timezone: string): string {
   return new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -196,17 +213,10 @@ function naturalInstant(iso: string, timezone: string): string {
 function scheduleFor(
   dueDate: string | null,
   student: Student,
-  wanted: boolean,
+  options: { tracked: boolean; reminder: boolean },
   dueTime: string | null = null,
 ) {
-  const stale = dueDate !== null && dueDate < today(student.timezone);
-  const tracked = wanted && !stale;
-  return {
-    status: tracked ? ("open" as const) : ("reference" as const),
-    remindAt: tracked && dueDate
-      ? remindAtFor(dueDate, student.timezone, new Date(), dueTime)
-      : null,
-  };
+  return scheduleTask(dueDate, student.timezone, options, dueTime);
 }
 
 /** What each ruling meant, in words the model can repeat to the student. */
@@ -271,6 +281,7 @@ export async function runTool(
   student: Student,
   name: string,
   input: Record<string, unknown>,
+  sourceTurnId: string,
 ): Promise<string> {
   switch (name) {
     case "update_dates": {
@@ -292,7 +303,10 @@ export async function runTool(
         return {
           id: action.id,
           dueDate,
-          ...scheduleFor(dueDate, student, true, action.due_time),
+          ...scheduleFor(dueDate, student, {
+            tracked: true,
+            reminder: action.remind_at !== null,
+          }, action.due_time),
         };
       });
 
@@ -330,12 +344,18 @@ export async function runTool(
         dated.map((action) => ({
           id: action.id,
           dueDate: action.due_date,
-          ...scheduleFor(action.due_date, student, wanted, action.due_time),
+          ...scheduleFor(action.due_date, student, {
+            tracked: wanted,
+            reminder: wanted,
+          }, action.due_time),
         })),
       );
 
       const tracked = dated.filter(
-        (action) => scheduleFor(action.due_date, student, wanted, action.due_time).status === "open",
+        (action) => scheduleFor(action.due_date, student, {
+          tracked: wanted,
+          reminder: wanted,
+        }, action.due_time).status === "open",
       ).length;
 
       const title = item.title ?? "that item";
@@ -368,60 +388,80 @@ export async function runTool(
     }
 
     case "save_note": {
-      const deadlines = Array.isArray(input.deadlines)
-        ? (input.deadlines as { description?: string; due_date?: string; due_time?: string }[])
-        : [];
+      const parsed = SaveNoteInput.safeParse(input);
+      if (!parsed.success) {
+        return toolFailure("I couldn’t safely read every task in that list. Send the list once more.");
+      }
+      const { deadlines, title, summary, reminder_requested: reminderRequested } = parsed.data;
 
       const scheduled = deadlines
-        .filter((entry) => entry.description)
         .map((entry) => {
           const dueDate = entry.due_date ?? null;
           return {
             description: entry.description as string,
             dueDate,
-            ...scheduleFor(dueDate, student, true, entry.due_time ?? null),
+            // A deadline is stored as an open task, but it becomes a scheduled
+            // reminder only when the student's words explicitly requested one.
+            ...scheduleFor(dueDate, student, {
+              tracked: true,
+              reminder: reminderRequested,
+            }, entry.due_time ?? null),
           };
         });
 
-      const title = String(input.title ?? "Note");
-      const itemId = await insertItem({
+      const stored = await saveNoteAtomic({
         studentId: student.id,
-        type: "note",
+        sourceMessageId: sourceTurnId,
         title,
-        summary: String(input.summary ?? ""),
+        summary,
         extractedText: JSON.stringify({ text_note_deadlines: deadlines }),
-        category: "note",
+        actions: scheduled,
       });
-
-      await insertActions(student.id, itemId, scheduled);
+      const itemId = stored.itemId;
 
       const first = scheduled.find((entry) => entry.dueDate !== null);
       const reminder = first?.remindAt ? naturalInstant(first.remindAt, student.timezone) : null;
       const due = first?.dueDate ? friendly(first.dueDate, student.timezone) : null;
-      const reminderRequested = input.reminder_requested === true;
       if (reminderRequested && !reminder) {
         return JSON.stringify({
           ok: true,
           kind: "reminder",
           needs_clarification: true,
           saved: true,
+          duplicate: stored.duplicate,
           item_id: itemId,
           confirmation: `${title} is saved — when should I remind you?`,
           required_terms: [title],
         });
       }
-      const confirmation = first && due
-        ? `Done — ${title} added for ${due}.` +
+      const taskNames = scheduled.map((entry) => entry.description);
+      const taskList = taskNames.length < 2
+        ? ""
+        : taskNames.length === 2
+          ? `${taskNames[0]} and ${taskNames[1]}`
+          : `${taskNames.slice(0, -1).join(", ")}, and ${taskNames.at(-1)}`;
+      const commonDueDate = scheduled.length > 1 && scheduled[0]?.dueDate &&
+        scheduled.every((entry) => entry.dueDate === scheduled[0]!.dueDate)
+        ? scheduled[0].dueDate
+        : null;
+      const confirmation = taskNames.length > 1
+        ? `Done — saved ${taskNames.length} tasks${commonDueDate ? ` for ${friendly(commonDueDate, student.timezone)}` : ""}: ${taskList}.` +
           (reminderRequested && reminder ? ` I’ll remind you ${reminder}.` : "")
-        : `Done — ${title} saved.`;
+        : first && due
+          ? `Done — ${title} added for ${due}.` +
+            (reminderRequested && reminder ? ` I’ll remind you ${reminder}.` : "")
+          : `Done — ${title} saved.`;
       return JSON.stringify({
         ok: true,
         kind: reminderRequested ? "reminder" : "mutation",
         saved: true,
+        duplicate: stored.duplicate,
         item_id: itemId,
         deadlines: scheduled,
         confirmation,
-        required_terms: [title, ...(due ? [due] : []), ...(reminderRequested && reminder ? [reminder] : [])],
+        required_terms: taskNames.length > 1
+          ? taskNames
+          : [title, ...(due ? [due] : []), ...(reminderRequested && reminder ? [reminder] : [])],
       });
     }
 

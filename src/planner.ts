@@ -130,9 +130,11 @@ const TERM_GROUPS = [
 
 const PLAN_PATTERN = /\b(plan|planning|schedule|prioriti[sz]e)\b|\bwork on\b|\bshould i work\b/i;
 const DAY_PATTERN = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow)\b/i;
-const RETRIEVE_PATTERN = /\b(assignment|deadline|due|save|saved|remember|cafe|coffee|place|spot|document|note|syllabus|exam|final|midterm|anything)\b|\b(do i have|did i save|tell me about)\b/i;
+const RETRIEVE_PATTERN = /\b(assignment|deadline|due|save|saved|remember|cafe|coffee|place|spot|document|note|syllabus|exam|final|midterm|task|tasks|todo|to-do|anything)\b|\b(do i have|did i save|tell me about)\b/i;
 const REFERENCE_PATTERN = /\b(it|that|this|those|them|the assignment|the project|the place)\b/i;
 const PLACE_PATTERN = /\b(cafe|coffee|place|spot|location|study)\b/i;
+const TASK_PATTERN = /\b(tasks?|to-?dos?|chores?|things? (?:to do|i need to do))\b/i;
+const COMPLETE_LIST_PATTERN = /\b(all|every|each|entire|complete|everything)\b|\blist\b|\bshow me\b/i;
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
 function text(value: unknown): string | null {
@@ -321,6 +323,10 @@ function requestIntent(question: string): RequestGrounding["intent"] {
   return "chitchat";
 }
 
+function asksForCompleteTaskList(question: string): boolean {
+  return TASK_PATTERN.test(question) && COMPLETE_LIST_PATTERN.test(question);
+}
+
 function analyzeRequest(
   question: string,
   items: ContextItem[],
@@ -355,6 +361,19 @@ function analyzeRequest(
     };
   }
 
+  if (asksForCompleteTaskList(question)) {
+    const chosen = items.filter((item) => item.actions.length > 0).slice(0, 10);
+    return {
+      grounding: {
+        intent,
+        candidateItemIds: chosen.map((item) => item.itemId),
+        matchStatus: chosen.length ? "matched" : "not_found",
+        resolvedReferenceItemId: null,
+      },
+      ranked: [...chosen, ...items.filter((item) => !chosen.includes(item))],
+    };
+  }
+
   const queryHasReference = REFERENCE_PATTERN.test(question);
   const prior = messages
     .filter((message) => folded(message.content) !== folded(question))
@@ -382,7 +401,7 @@ function analyzeRequest(
   const genericPlaceQuestion =
     asksForPlace && [...rawQueryTokens].every((token) => genericPlaceTerms.has(token));
   const broadListQuestion =
-    /\b(assignments|deadlines|projects|places|spots|anything|all|coming up|this week)\b/i.test(question);
+    /\b(assignments|deadlines|projects|tasks|to-?dos?|places|spots|anything|all|every|coming up|this week)\b/i.test(question);
   const ambiguous =
     !broadListQuestion && (
       (equalTop.length > 1 && topScore > 0) ||
@@ -687,16 +706,17 @@ function uniqueActions(actions: ContextAction[]): ContextAction[] {
 }
 
 function retrievalActions(context: StudentContext, candidates: ContextItem[]): ContextAction[] {
+  const taskList = asksForCompleteTaskList(context.question);
   let actions = uniqueActions([
     ...candidates.flatMap((item) => item.actions),
-    ...context.upcomingDeadlines,
-  ]).filter((action): action is ContextAction & { dueDate: string } => action.dueDate !== null);
+    ...(taskList ? [] : context.upcomingDeadlines),
+  ]).filter((action) => taskList || action.dueDate !== null);
 
   if (NEXT_FOLLOW_UP.test(context.question)) {
     const prior = recentAssistantText(context) ?? "";
     const unseen = actions.filter((action) =>
       !containsAnswerKey(prior, actionName(action)) &&
-      !containsAnswerKey(prior, action.dueDate!),
+      (!action.dueDate || !containsAnswerKey(prior, action.dueDate)),
     );
     if (unseen.length > 0) actions = unseen;
   }
@@ -836,8 +856,19 @@ export function validateReply(
       .map((id) => context.savedItems.find((item) => item.itemId === id))
       .filter((item): item is ContextItem => item !== undefined);
     const asksForDeadline = /\b(due|deadline|coming up|upcoming work|after that|what else|next)\b/i.test(context.question);
+    const asksForEveryTask = asksForCompleteTaskList(context.question);
 
-    if (asksForDeadline) {
+    if (asksForEveryTask) {
+      const required = retrievalActions(context, candidates);
+      for (const action of required) {
+        if (!containsAnswerKey(trimmed, actionName(action))) {
+          return `The complete task answer must include ${actionName(action)}.`;
+        }
+      }
+      if (required.length === 0 && !/\b(no tasks?|nothing (?:saved|to do)|don.t have any tasks?)\b/i.test(trimmed)) {
+        return "Say plainly that no tasks were found.";
+      }
+    } else if (asksForDeadline) {
       const target = retrievalActions(context, candidates)[0];
       if (!target?.dueDate) {
         if (!/\b(don.t have|do not have|doesn.t have|does not have|no open|no saved|nothing due|without a due date|has no .*due date)\b/i.test(trimmed)) {
@@ -906,14 +937,25 @@ function retrieveFallback(context: StudentContext): string {
     .map((id) => context.savedItems.find((item) => item.itemId === id))
     .filter((item): item is ContextItem => item !== undefined);
   const asksForDeadline = /\b(due|deadline|coming up|upcoming work|after that|what else|next)\b/i.test(context.question);
+  const asksForEveryTask = asksForCompleteTaskList(context.question);
   if (context.request.matchStatus === "ambiguous") {
     const names = candidates.map(itemName).join(" or ");
     return `${names || "More than one thing fits"} — which one do you mean?`;
   }
 
-  const dated = retrievalActions(context, candidates);
-  if (dated.length > 0) {
-    const selected = dated.slice(0, 3);
+  const matchedActions = retrievalActions(context, candidates);
+  if (asksForEveryTask && matchedActions.length > 0) {
+    const selected = matchedActions.slice(0, 10);
+    const facts = selected.map((action) => action.dueDate
+      ? `${actionName(action)} (${friendly(action.dueDate, context.student.timezone)})`
+      : actionName(action));
+    const suffix = matchedActions.length > selected.length
+      ? ` I’m showing the first ${selected.length} of ${matchedActions.length}.`
+      : "";
+    return `${matchedActions.length} ${matchedActions.length === 1 ? "task" : "tasks"}: ${facts.join(", ")}.${suffix}`;
+  }
+  if (matchedActions.length > 0) {
+    const selected = matchedActions.slice(0, 3) as (ContextAction & { dueDate: string })[];
     if (selected.length === 1) {
       const action = selected[0]!;
       return `${actionName(action)} is due ${friendly(action.dueDate!, context.student.timezone)}.`;
