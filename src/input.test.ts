@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import { InputDiagnosticError, safeDiagnostic } from "./diagnostics.ts";
-import { classifyInputMime, uniqueAttachments, validateReadableBytes } from "./input.ts";
+import {
+  classifyInputMime,
+  shouldPersistArtifact,
+  uniqueAttachments,
+  validateReadableBytes,
+} from "./input.ts";
 
 async function expectInputError(
   bytes: Buffer,
@@ -39,6 +44,13 @@ test("duplicated attachment identities collapse but distinct items survive", () 
     { id: "b", name: "two.pdf", mimeType: "application/pdf", size: 10 },
   ];
   assert.deepEqual(uniqueAttachments(files).map((file) => file.id), ["a", "b"]);
+});
+
+test("an immediate retraction in the same burst prevents attachment persistence", () => {
+  assert.equal(shouldPersistArtifact("actually don't save that"), false);
+  assert.equal(shouldPersistArtifact("do not save this PDF"), false);
+  assert.equal(shouldPersistArtifact("just summarize this"), false);
+  assert.equal(shouldPersistArtifact("save this for my exam"), true);
 });
 
 test("diagnostics redact common credential shapes and omit stacks", () => {

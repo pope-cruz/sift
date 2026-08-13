@@ -675,3 +675,35 @@ test("an undated reminder request asks only for the missing time", () => {
   };
   assert.equal(validateReply(result, "Club meeting is saved — when should I remind you?", attempt), null);
 });
+
+test("undo confirmation is mutation-gated and must preserve the removed item", () => {
+  const result = context("Actually don't save that", { items: [PROJECT], actions: [PROJECT_DUE] });
+  const attempt = {
+    completedTools: [{
+      name: "undo_last_save",
+      result: JSON.stringify({
+        ok: true,
+        kind: "mutation",
+        confirmation: "Done — removed Project 1.",
+        required_terms: ["removed", "Project 1"],
+      }),
+    }],
+  };
+  assert.equal(validateReply(result, "Done — removed Project 1.", attempt), null);
+  assert.match(validateReply(result, "Done — removed it.", attempt) ?? "", /Project 1/);
+});
+
+test("a failed undo cannot be phrased as a deletion", () => {
+  const result = context("Actually don't save that", {});
+  const attempt = {
+    completedTools: [{
+      name: "undo_last_save",
+      result: JSON.stringify({
+        ok: false,
+        user_message: "I couldn’t find a recent save to remove.",
+      }),
+    }],
+  };
+  assert.match(validateReply(result, "Done — deleted it.", attempt) ?? "", /do not claim success/i);
+  assert.equal(validateReply(result, "I couldn’t find a recent save to remove.", attempt), null);
+});

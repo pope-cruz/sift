@@ -743,7 +743,7 @@ function mutationContract(answer: string, attempt?: ReplyAttempt): string | null
   if (!last) return null;
   const result = parsedToolResult(last.result);
   if (result?.ok !== true) {
-    if (/\b(?:done|added|saved|changed|moved|rescheduled|cancelled|tracking)\b/i.test(answer)) {
+    if (/\b(?:done|added|saved|changed|moved|removed|deleted|rescheduled|cancelled|tracking)\b/i.test(answer)) {
       return "The tool did not complete the change; do not claim success.";
     }
     const userMessage = typeof result?.user_message === "string" ? result.user_message : null;

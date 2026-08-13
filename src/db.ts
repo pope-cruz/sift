@@ -282,6 +282,7 @@ export async function saveNoteAtomic(input: {
 export async function saveIngestItemAtomic(input: {
   studentId: string;
   sourceMessageId: string;
+  sourceTurnId: string;
   type: string;
   title: string | null;
   summary: string;
@@ -295,6 +296,7 @@ export async function saveIngestItemAtomic(input: {
   const { data, error } = await db.rpc("save_ingest_item", {
     p_student_id: input.studentId,
     p_source_message_id: input.sourceMessageId,
+    p_source_turn_id: input.sourceTurnId,
     p_type: input.type,
     p_title: input.title,
     p_summary: input.summary,
@@ -340,6 +342,46 @@ export async function saveIngestItemAtomic(input: {
   const row = data?.[0];
   if (!row?.item_id) throw new Error("The ingest transaction returned no item.");
   return { itemId: row.item_id, duplicate: row.duplicate === true };
+}
+
+export type UndoLatestSaveResult = {
+  itemCount: number;
+  titles: string[];
+};
+
+/**
+ * Remove only the newest recent save-turn owned by this student. The database
+ * transaction deletes derived items/actions/attachment rows and returns only
+ * storage objects that no surviving attachment references. Student profile and
+ * conversation messages are outside the function's write set.
+ */
+export async function undoLatestSave(studentId: string): Promise<UndoLatestSaveResult | null> {
+  const { data, error } = await db.rpc("undo_latest_save", { p_student_id: studentId });
+  if (error) throw error;
+  const row = data?.[0];
+  if (!row || Number(row.item_count) < 1) return null;
+
+  const storagePaths = Array.isArray(row.storage_paths)
+    ? row.storage_paths.filter((path: unknown): path is string => typeof path === "string" && path.length > 0)
+    : [];
+  if (storagePaths.length > 0) {
+    const removed = await db.storage.from(BUCKET).remove(storagePaths);
+    if (removed.error) {
+      await recordJobFailure({
+        stage: "undo.storage_cleanup",
+        resourceId: studentId,
+        error: removed.error,
+      });
+    }
+  }
+
+  return {
+    itemCount: Number(row.item_count),
+    titles: Array.isArray(row.titles)
+      ? row.titles.filter((title: unknown): title is string =>
+          typeof title === "string" && title.trim().length > 0)
+      : [],
+  };
 }
 
 /** Returns the new row ids, in the order given. */

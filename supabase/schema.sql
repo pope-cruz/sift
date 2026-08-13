@@ -29,6 +29,10 @@ create table if not exists items (
 );
 
 alter table items add column if not exists source_message_id text;
+-- Every item produced by one inbound turn shares this value. It is separate
+-- from source_message_id because one PDF can produce several independently
+-- idempotent items that must still be undone together.
+alter table items add column if not exists source_turn_id text;
 
 create table if not exists actions (
   id uuid primary key default gen_random_uuid(),
@@ -135,6 +139,8 @@ alter table demo_uploads add constraint demo_uploads_status_check
 create index if not exists items_student_created_idx on items (student_id, created_at desc);
 create unique index if not exists items_student_source_message_idx
   on items (student_id, source_message_id) where source_message_id is not null;
+create index if not exists items_student_source_turn_idx
+  on items (student_id, source_turn_id, created_at desc) where source_turn_id is not null;
 create index if not exists actions_student_due_idx on actions (student_id, due_date);
 create index if not exists messages_student_created_idx on messages (student_id, created_at desc);
 create index if not exists messages_pending_idx on messages (processing_status, created_at)
@@ -195,8 +201,13 @@ begin
     raise exception using errcode = 'P0001', message = 'INVALID_NOTE_ACTIONS';
   end if;
 
-  insert into items (student_id, type, title, summary, extracted_text, category, source_message_id)
-  values (p_student_id, 'note', p_title, p_summary, p_extracted_text, 'note', p_source_message_id)
+  insert into items (
+    student_id, type, title, summary, extracted_text, category, source_message_id, source_turn_id
+  )
+  values (
+    p_student_id, 'note', p_title, p_summary, p_extracted_text, 'note',
+    p_source_message_id, p_source_message_id
+  )
   returning id into v_item;
 
   insert into actions (student_id, item_id, description, due_date, remind_at, status)
@@ -215,6 +226,7 @@ end $$;
 create or replace function save_ingest_item(
   p_student_id uuid,
   p_source_message_id text,
+  p_source_turn_id text,
   p_type text,
   p_title text,
   p_summary text,
@@ -240,8 +252,13 @@ begin
     raise exception using errcode = 'P0001', message = 'INVALID_INGEST_ACTIONS';
   end if;
 
-  insert into items (student_id, type, title, summary, extracted_text, category, source_message_id)
-  values (p_student_id, p_type, p_title, p_summary, p_extracted_text, p_category, p_source_message_id)
+  insert into items (
+    student_id, type, title, summary, extracted_text, category, source_message_id, source_turn_id
+  )
+  values (
+    p_student_id, p_type, p_title, p_summary, p_extracted_text, p_category,
+    p_source_message_id, p_source_turn_id
+  )
   returning id into v_item;
   insert into attachments (student_id, item_id, filename, mime_type, storage_path)
   values (p_student_id, v_item, p_filename, p_mime_type, p_storage_path);
@@ -255,6 +272,64 @@ begin
     case when entry->>'status' = 'reference' then 'reference' else 'open' end
   from jsonb_array_elements(p_actions) as entry;
   return query select v_item, false;
+end $$;
+
+-- Undo is deliberately narrow: no caller-supplied item id, title, wildcard, or
+-- profile field can reach this function. It removes only the newest save-turn
+-- owned by this student, and only while "what I just sent" is still a truthful
+-- description. Messages remain as conversational history. Storage objects are
+-- returned to the worker only after all database references are gone.
+create or replace function undo_latest_save(p_student_id uuid)
+returns table(item_count integer, titles text[], storage_paths text[])
+language plpgsql security definer set search_path = public as $$
+declare
+  v_source_turn_id text;
+  v_item_ids uuid[];
+  v_titles text[];
+  v_candidate_paths text[];
+  v_storage_paths text[];
+begin
+  perform pg_advisory_xact_lock(hashtext(p_student_id::text || ':undo_latest_save'));
+
+  select i.source_turn_id into v_source_turn_id
+  from items i
+  where i.student_id = p_student_id
+    and i.source_turn_id is not null
+    and i.created_at >= now() - interval '2 hours'
+  order by i.created_at desc, i.id desc
+  limit 1;
+
+  if v_source_turn_id is null then
+    return;
+  end if;
+
+  select
+    array_agg(i.id order by i.created_at, i.id),
+    array_agg(i.title order by i.created_at, i.id) filter (where i.title is not null)
+  into v_item_ids, v_titles
+  from items i
+  where i.student_id = p_student_id and i.source_turn_id = v_source_turn_id;
+
+  select coalesce(array_agg(distinct a.storage_path), array[]::text[])
+  into v_candidate_paths
+  from attachments a
+  where a.student_id = p_student_id
+    and a.item_id = any(v_item_ids)
+    and a.storage_path is not null;
+
+  delete from actions
+  where student_id = p_student_id and item_id = any(v_item_ids);
+  delete from attachments
+  where student_id = p_student_id and item_id = any(v_item_ids);
+  delete from items
+  where student_id = p_student_id and id = any(v_item_ids);
+
+  select coalesce(array_agg(candidate.path), array[]::text[])
+  into v_storage_paths
+  from unnest(v_candidate_paths) as candidate(path)
+  where not exists (select 1 from attachments a where a.storage_path = candidate.path);
+
+  return query select cardinality(v_item_ids), coalesce(v_titles, array[]::text[]), v_storage_paths;
 end $$;
 
 -- Atomically create an isolated student and fixed 24-hour session while
@@ -564,7 +639,8 @@ revoke all on function create_demo_session(text, text, text) from public, anon, 
 revoke all on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) from public, anon, authenticated;
 revoke all on function claim_demo_turn(text, text, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function save_note_with_actions(uuid, text, text, text, text, jsonb) from public, anon, authenticated;
-revoke all on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, text, jsonb) from public, anon, authenticated;
+revoke all on function undo_latest_save(uuid) from public, anon, authenticated;
 revoke all on function release_demo_upload(text, uuid) from public, anon, authenticated;
 revoke all on function reset_demo_session(text, text) from public, anon, authenticated;
 revoke all on function claim_inbound_message(text) from public, anon, authenticated;
@@ -573,7 +649,8 @@ grant execute on function create_demo_session(text, text, text) to service_role;
 grant execute on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) to service_role;
 grant execute on function claim_demo_turn(text, text, text, bigint, uuid) to service_role;
 grant execute on function save_note_with_actions(uuid, text, text, text, text, jsonb) to service_role;
-grant execute on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, jsonb) to service_role;
+grant execute on function save_ingest_item(uuid, text, text, text, text, text, text, text, text, text, text, jsonb) to service_role;
+grant execute on function undo_latest_save(uuid) to service_role;
 grant execute on function release_demo_upload(text, uuid) to service_role;
 grant execute on function reset_demo_session(text, text) to service_role;
 grant execute on function claim_inbound_message(text) to service_role;

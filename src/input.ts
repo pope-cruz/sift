@@ -65,6 +65,11 @@ export async function validateReadableBytes(
 
 export type AttachmentIdentity = { id: string; name: string; mimeType: string; size?: number };
 
+/** An immediate retraction inside the burst itself prevents the write entirely. */
+export function shouldPersistArtifact(text: string): boolean {
+  return !/\b(?:do not|don['’]?t) save\b|\bjust (?:read|summarize|tell me|answer)\b|\bwithout saving\b/i.test(text);
+}
+
 /** Collapse provider duplicates within one group without conflating distinct files. */
 export function uniqueAttachments<T extends AttachmentIdentity>(files: T[]): T[] {
   const seen = new Set<string>();

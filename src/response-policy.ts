@@ -39,6 +39,7 @@ export const MUTATION_TOOLS = new Set([
   "update_dates",
   "set_tracking",
   "save_note",
+  "undo_last_save",
   "reschedule_reminder",
   "cancel_reminder",
 ]);

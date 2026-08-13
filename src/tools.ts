@@ -16,6 +16,7 @@ import {
   rescheduleActionReminder,
   rescheduleActions,
   saveNoteAtomic,
+  undoLatestSave,
   type Student,
 } from "./db.ts";
 import { friendly, isIsoDate, localInstant } from "./dates.ts";
@@ -116,6 +117,21 @@ export const TOOLS: Anthropic.Tool[] = [
         },
       },
       required: ["title", "summary"],
+    },
+  },
+  {
+    name: "undo_last_save",
+    description:
+      "Remove only the most recent thing the student asked Sift to save. Use only for an " +
+      'explicit immediate retraction such as "actually don\'t save that", "remove what I just sent", ' +
+      'or "delete the PDF I just sent". This never deletes profile/personal context or conversation ' +
+      "history, and it cannot target an older item by name. Do not use it for 'don't remind me' " +
+      "or 'keep it as reference'; those use cancel_reminder or set_tracking.",
+    input_schema: {
+      type: "object",
+      properties: {},
+      required: [],
+      additionalProperties: false,
     },
   },
   {
@@ -462,6 +478,25 @@ export async function runTool(
         required_terms: taskNames.length > 1
           ? taskNames
           : [title, ...(due ? [due] : []), ...(reminderRequested && reminder ? [reminder] : [])],
+      });
+    }
+
+    case "undo_last_save": {
+      const removed = await undoLatestSave(student.id);
+      if (!removed) {
+        return toolFailure("I couldn’t find a recent save to remove.");
+      }
+
+      const onlyTitle = removed.itemCount === 1 ? removed.titles[0] : null;
+      return JSON.stringify({
+        ok: true,
+        kind: "mutation",
+        removed: true,
+        item_count: removed.itemCount,
+        confirmation: onlyTitle
+          ? `Done — removed ${onlyTitle}.`
+          : "Done — removed what you just sent.",
+        required_terms: ["removed", ...(onlyTitle ? [onlyTitle] : [])],
       });
     }
 

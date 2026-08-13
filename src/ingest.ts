@@ -26,7 +26,12 @@ import {
   type Student,
 } from "./db.ts";
 import { analyzeArtifact } from "./llm.ts";
-import { classifyInputMime, uniqueAttachments, validateReadableBytes } from "./input.ts";
+import {
+  classifyInputMime,
+  shouldPersistArtifact,
+  uniqueAttachments,
+  validateReadableBytes,
+} from "./input.ts";
 import { rollbackArtifact, settleArtifactPreparation } from "./rollback.ts";
 import type { TurnAttachment } from "./turn-core.ts";
 
@@ -99,6 +104,7 @@ async function ingestArtifact(
   caption: string,
   captionScope: AdmissionContext["captionScope"],
   sourceMessageId: string,
+  sourceTurnId: string,
   persist: boolean,
 ): Promise<string> {
   // `size` is optional on the provider's attachment, so it's a cheap early
@@ -185,6 +191,7 @@ async function ingestArtifact(
       const saved = await saveIngestItemAtomic({
         studentId: student.id,
         sourceMessageId: `${sourceMessageId}:${index}`,
+        sourceTurnId,
         type: result.item.type,
         title: result.item.title,
         summary: result.item.summary,
@@ -250,7 +257,7 @@ async function route(input: {
   const files = uniqueAttachments(input.files);
 
   const replies: string[] = [];
-  const persist = !/\b(?:do not|don['’]?t) save\b|\bjust (?:read|summarize|tell me|answer)\b|\bwithout saving\b/i.test(text);
+  const persist = shouldPersistArtifact(text);
 
   for (const [fileIndex, file] of files.entries()) {
     // The only decision MIME type gets to make: can the model read these bytes,
@@ -265,6 +272,7 @@ async function route(input: {
             text,
             files.length === 1 ? "single_artifact" : "multi_artifact_turn",
             `${input.sourceMessageId ?? "attachment"}:${file.id}:${fileIndex}`,
+            input.sourceMessageId ?? "attachment",
             persist,
           ),
         );
