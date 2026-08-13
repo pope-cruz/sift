@@ -18,6 +18,23 @@ npm install
 npm run start
 ```
 
+## Landing page
+
+The public landing page lives in [`web/`](./web) as a single self-contained static file
+(`web/index.html`) — no build step, no dependencies, no network or model calls at runtime.
+It is ported from the Claude Design source (`Sift Landing.dc.html`); the design file's
+`support.js` runtime is a design-tool dependency and is deliberately not shipped.
+
+Preview it locally:
+
+```sh
+python3 -m http.server 4321 --directory web
+```
+
+To deploy, publish `web/` as the static root on any static host (Vercel, Netlify, GitHub
+Pages, Cloudflare Pages). The demo in the page is a scripted walkthrough — it is not wired
+to the agent in `src/`.
+
 ## Where to go next
 
 - [Spectrum docs](https://photon.codes/docs/spectrum-ts)
