@@ -44,8 +44,15 @@ export type Decision = {
   reason: string;
 };
 
-/** True when content classification identifies study-from material. */
-export function looksLikePractice(analysis: ArtifactAnalysis, _filename: string): boolean {
+/**
+ * True when content classification identifies study-from material.
+ *
+ * Deliberately takes no filename. "Sample Midterm 2018.pdf" is the case this
+ * pipeline was rebuilt around, and the fix was that the *content* classifies the
+ * artifact — a filename is metadata a human typed once. The parameter used to be
+ * here and unread, which reads like the filename still gets a vote.
+ */
+export function looksLikePractice(analysis: ArtifactAnalysis): boolean {
   return (
     analysis.purpose === "practice_material" ||
     analysis.secondary_tags.includes("practice_material")
@@ -56,11 +63,8 @@ export function looksLikePractice(analysis: ArtifactAnalysis, _filename: string)
  * The purpose we actually record, after code has reconciled the reader's
  * primary and secondary content classifications. Filenames do not participate.
  */
-export function effectivePurpose(
-  analysis: ArtifactAnalysis,
-  filename: string,
-): ArtifactPurpose {
-  if (analysis.purpose === "exam_information" && looksLikePractice(analysis, filename)) {
+export function effectivePurpose(analysis: ArtifactAnalysis): ArtifactPurpose {
+  if (analysis.purpose === "exam_information" && looksLikePractice(analysis)) {
     return "practice_material";
   }
   return analysis.purpose;
@@ -309,8 +313,8 @@ export function aggregate(
   analysis: ArtifactAnalysis,
   context: AdmissionContext,
 ): AggregateResult {
-  const practice = looksLikePractice(analysis, context.filename);
-  const purpose = effectivePurpose(analysis, context.filename);
+  const practice = looksLikePractice(analysis);
+  const purpose = effectivePurpose(analysis);
   const metadata = reconcileMetadata(analysis.metadata_candidates);
 
   const decisions = reconcileDateConflicts(
@@ -383,7 +387,7 @@ export function aggregate(
       type: itemType(purpose, analysis),
       title,
       summary: analysis.summary,
-      category: itemCategory(purpose, analysis, metadata.values.category),
+      category: metadata.values.category,
       extractedText,
     },
     actions,
@@ -404,15 +408,6 @@ function itemType(purpose: ArtifactPurpose, analysis: ArtifactAnalysis): string 
   if (analysis.place !== null && (purpose === "place" || purpose === "other")) return "place";
   if (purpose === "place") return "other";
   return purpose;
-}
-
-function itemCategory(
-  purpose: ArtifactPurpose,
-  analysis: ArtifactAnalysis,
-  reconciled: string | null,
-): string | null {
-  if (reconciled) return reconciled;
-  return null;
 }
 
 /**

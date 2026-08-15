@@ -15,7 +15,10 @@ Safety constraints: do not reseed or delete production rows; do not delete stora
 ## Evidence to capture per case
 
 - Spectrum message shape and one reply per inbound message.
-- Stage latency from `[ingest] read`, `validate`, `analyze`, `upload`, and `TOTAL` logs.
+- Stage latency from `[ingest] read`, `validate`, `analyze`, `upload`, and `TOTAL` logs. Each
+  stage line carries its filename (`[ingest] analyze syllabus.pdf 8123ms`) because attachments
+  are read up to three at a time, so a multi-file turn interleaves these lines. `TOTAL` remains
+  per turn, and on a multi-file turn is now the slowest file rather than the sum of all of them.
 - Item, action, attachment, and message rows created after the case.
 - Parsed `extracted_text`: item key, resolved metadata, every candidate source/outcome/reason, and date decisions.
 - Storage object path is referenced by every attachment row and there are no unreferenced objects created during the run.

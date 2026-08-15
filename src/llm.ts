@@ -28,7 +28,25 @@ import { mergeListedTasks } from "./task-list.ts";
 // hence the generous ceilings below.
 const FAST = "claude-haiku-4-5";
 const READER = "claude-sonnet-5";
-const READER_EFFORT = "medium" as const;
+
+/**
+ * Effort is the reader's main latency knob, and it was one constant for every
+ * artifact: a phone screenshot of a whiteboard bought the same thinking budget
+ * as a forty-page syllabus. The two inputs are not the same problem — a single
+ * image is one shallow pass over a handful of visible dates, while a PDF can
+ * hide the same obligation in a table, a prose paragraph, and a revision
+ * footer, which is exactly what the reconciliation rules downstream need
+ * reported thoroughly.
+ *
+ * UNVERIFIED: the image reduction has not been measured against the fixture
+ * corpus. It trades reader accuracy — the thing analysis.ts exists to protect —
+ * for latency on the most common demo input. Raise `image` back to "medium" if
+ * extraction quality on screenshots regresses.
+ */
+const READER_EFFORT = {
+  pdf: "medium",
+  image: "low",
+} as const;
 
 let client: Anthropic | undefined;
 
@@ -428,7 +446,10 @@ export async function analyzeArtifact(input: ReaderInput): Promise<ArtifactAnaly
           ],
         },
       ],
-      output_config: { effort: READER_EFFORT, format: zodOutputFormat(ArtifactAnalysisBatch) },
+      output_config: {
+        effort: READER_EFFORT[input.mimeType === "application/pdf" ? "pdf" : "image"],
+        format: zodOutputFormat(ArtifactAnalysisBatch),
+      },
     }, { signal }));
 
     return parsedOrThrow(response, "analyzeArtifact").items;
