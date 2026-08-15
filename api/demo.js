@@ -4,7 +4,7 @@
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { handle } from "hono/vercel";
+import { handle } from "@hono/node-server/vercel";
 
 // src/demo.ts
 import { randomUUID } from "node:crypto";
