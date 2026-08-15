@@ -1,0 +1,4 @@
+# Build artifact bundled from src/demo-api.ts by `npm run build:api`.
+# Committed because Vercel resolves vercel.json "functions" patterns before
+# the build runs. Collapsed in diffs and excluded from language stats.
+api/demo.js linguist-generated=true
