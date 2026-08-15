@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 
-import { demoApp } from "../api/demo.ts";
+import { demoApp } from "./demo-api.ts";
 import { db } from "./db.ts";
 
 const port = Number(process.env.PORT ?? 3000);
