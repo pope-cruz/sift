@@ -19,15 +19,15 @@ import {
   resumeOrCreateDemoSession,
   saveDemoTurn,
   type DemoEvent,
-} from "../src/demo.ts";
-import { demoScenario, isDemoScenarioId } from "../src/demo-fixtures.ts";
-import { runWebDemoReminder } from "../src/demo-reminders.ts";
-import { listPendingReminders, recordMessage } from "../src/db.ts";
-import { InputDiagnosticError, safeDiagnostic } from "../src/diagnostics.ts";
-import { getDemoEnv } from "../src/env.ts";
-import { validateReadableBytes } from "../src/input.ts";
-import { processTurn, type TurnAttachment } from "../src/turn-core.ts";
-import { reminderPresentationDelta } from "../src/reminder-delta.ts";
+} from "./demo.ts";
+import { demoScenario, isDemoScenarioId } from "./demo-fixtures.ts";
+import { runWebDemoReminder } from "./demo-reminders.ts";
+import { listPendingReminders, recordMessage } from "./db.ts";
+import { InputDiagnosticError, safeDiagnostic } from "./diagnostics.ts";
+import { getDemoEnv } from "./env.ts";
+import { validateReadableBytes } from "./input.ts";
+import { processTurn, type TurnAttachment } from "./turn-core.ts";
+import { reminderPresentationDelta } from "./reminder-delta.ts";
 
 export const config = { runtime: "nodejs", maxDuration: 300 };
 

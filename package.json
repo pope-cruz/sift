@@ -8,7 +8,7 @@
     "test": "node --experimental-strip-types --test src/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "build": "tsc --noEmit",
+    "build": "tsc --noEmit && npm run build:api",
     "demo:dev": "tsx watch src/demo-dev.ts",
     "verify": "npm test && npm run typecheck && npm run lint && npm run build",
     "dev": "tsx watch src/index.ts",
@@ -23,7 +23,8 @@
     "phase4:audit": "tsx src/spike/phase4-audit.ts",
     "phase4:controls": "tsx src/spike/phase4-control-check.ts",
     "tone:smoke": "tsx src/spike/tone-smoke.ts",
-    "remind:now": "tsx src/remind-now.ts"
+    "remind:now": "tsx src/remind-now.ts",
+    "build:api": "esbuild src/demo-api.ts --bundle --platform=node --format=esm --target=node22 --packages=external --outfile=api/demo.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.116.0",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "esbuild": "^0.28.2",
     "typescript": "^5"
   },
   "overrides": {
