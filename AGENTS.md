@@ -1,4 +1,4 @@
-# sift — agent instructions
+# sort — agent instructions
 
 This is a [Spectrum](https://photon.codes/docs/spectrum-ts) app, pinned to `spectrum-ts@^12.7.0`. The entry point is `src/index.ts`, which configures the imessage provider(s) and runs the echo loop.
 

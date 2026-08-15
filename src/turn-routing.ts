@@ -15,7 +15,7 @@ export async function routeActiveTurn(input: {
   answer(): Promise<string>;
 }): Promise<void> {
   if (input.attachmentCount > 0) {
-    await input.channel.send("Sifting...", { transient: true });
+    await input.channel.send("Sorting...", { transient: true });
     await input.channel.responding(async () => input.channel.send(await input.ingest()));
     return;
   }

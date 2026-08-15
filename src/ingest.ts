@@ -1,5 +1,5 @@
 // Ingest: a turn carrying something to remember becomes rows in items /
-// actions / attachments, plus the sentence Sift texts back.
+// actions / attachments, plus the sentence sort texts back.
 //
 // The pipeline is evidence-first, in four stages:
 //

@@ -12,7 +12,7 @@ import { Spectrum } from "spectrum-ts";
 import { imessage } from "spectrum-ts/providers/imessage";
 
 const spaceId = process.argv[2] ?? process.env.DEMO_SPACE_ID;
-const text = process.argv[3] ?? "Sift here — this one came from outside the message loop.";
+const text = process.argv[3] ?? "sort here — this one came from outside the message loop.";
 
 if (!spaceId) {
   throw new Error("Pass a space id: npm run spike:send -- \"<space.id>\" (or set DEMO_SPACE_ID)");

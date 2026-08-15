@@ -1,4 +1,4 @@
-// Every Claude call Sift makes: one conversational turn, and two extractions.
+// Every Claude call sort makes: one conversational turn, and two extractions.
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 
@@ -78,9 +78,10 @@ function asImageType(mimeType: string): ImageType {
   return match;
 }
 
-const SIFT_SYSTEM = `You are Sift, a study assistant a student texts over iMessage. You
-remember their coursework, deadlines, and places they want to study, and you remind them
-when something is due.
+const SORT_SYSTEM = `You are sort — always lowercase — the place a student sends whatever
+college throws at them: syllabus PDFs, screenshots, links, listings, and stray thoughts. You
+work out what each thing is, sort it into the right kind of context, connect it to what they
+sent before, and bring it back or remind them when it matters.
 
 Reading what they send:
 - These are text messages. Typos, shorthand, and dropped words are normal — read for intent.
@@ -197,7 +198,7 @@ export async function respond(input: {
       model: FAST,
       max_tokens: 1500,
       system:
-        `${SIFT_SYSTEM}\n\nToday is ${today(input.timezone)} (${input.timezone}).` +
+        `${SORT_SYSTEM}\n\nToday is ${today(input.timezone)} (${input.timezone}).` +
         `\n\nEVIDENCE:\n${input.context}`,
       tools: [...input.tools, REPLY_TOOL],
       tool_choice: { type: "any" },

@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#F6F4EE">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co; img-src 'self' data: blob:; base-uri 'none'; form-action 'self'">
-  <title>Interactive demo · Sift</title>
-  <meta name="description" content="Try Sift with real model calls and temporary 24-hour memory.">
+  <title>Try sort · Interactive demo</title>
+  <meta name="description" content="Send sort a syllabus, a screenshot, a link, or a stray thought and watch it sort. Real model calls, temporary 24-hour context.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23191815'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23C94F32'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -34,13 +34,13 @@
       .demo-control-copy { align-items: flex-start; flex-direction: column; gap: 1px; }
     }
   </style>
-  <script type="module" src="/demo/demo.js?v=4"></script>
+  <script type="module" src="/demo/demo.js?v=5"></script>
 </head>
 <body>
   <a class="skip" href="#composer">Skip to message composer</a>
   <main class="shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="Sift home"><span class="brand-dot"></span>Sift</a>
+      <a class="brand" href="/" aria-label="sort home"><span class="brand-dot"></span>sort</a>
       <div class="session-meta">
         <span class="status-dot" id="connection-dot"></span>
         <span id="expiry-label">24-hour demo</span>
@@ -52,35 +52,35 @@
 
     <section class="intro" aria-labelledby="demo-title">
       <div>
-        <p class="eyebrow">Real Sift routing</p>
-        <h1 id="demo-title">Send the mess.<br>Sift keeps the signal.</h1>
+        <p class="eyebrow">Real sorting</p>
+        <h1 id="demo-title">Send the mess.<br>sort takes it from there.</h1>
       </div>
-      <p>Try the same ingest, memory, planning, and reminder logic used by Sift in Messages. This is a browser conversation—not a phone replica.</p>
+      <p>The same sorting that runs in Messages: it reads what you send, decides what kind of thing it is, and keeps it with its source. This is a browser conversation—not a phone replica.</p>
     </section>
 
     <section class="starter-section" id="starters" aria-labelledby="starter-title">
       <div class="section-heading">
-        <h2 id="starter-title">Start with something real</h2>
-        <span>Each card becomes a generated screenshot and enters the actual attachment pipeline.</span>
+        <h2 id="starter-title">Send it something</h2>
+        <span>Each card becomes a real screenshot and goes through the actual attachment pipeline. Send more than one, then ask a question that needs both.</span>
       </div>
       <div class="starter-grid">
         <button class="starter" data-scenario="deadlines" type="button">
-          <span class="starter-index">01</span><span class="starter-copy"><strong>Find syllabus deadlines</strong><small>Read a current course schedule</small></span><span aria-hidden="true">→</span>
+          <span class="starter-index">01</span><span class="starter-copy"><strong>Sort this syllabus</strong><small>A course schedule becomes dated deadlines</small></span><span aria-hidden="true">→</span>
         </button>
         <button class="starter" data-scenario="cafe" type="button">
-          <span class="starter-index">02</span><span class="starter-copy"><strong>Remember a café</strong><small>Save a place and retrieve it later</small></span><span aria-hidden="true">→</span>
+          <span class="starter-index">02</span><span class="starter-copy"><strong>Save this place</strong><small>A café you'll want to find again later</small></span><span aria-hidden="true">→</span>
         </button>
         <button class="starter" data-scenario="application" type="button">
-          <span class="starter-index">03</span><span class="starter-copy"><strong>Schedule a reminder</strong><small>Track an application deadline</small></span><span aria-hidden="true">→</span>
+          <span class="starter-index">03</span><span class="starter-copy"><strong>Remember this opportunity</strong><small>A listing with a closing date worth a reminder</small></span><span aria-hidden="true">→</span>
         </button>
       </div>
     </section>
 
-    <section class="conversation" aria-label="Sift demo conversation">
+    <section class="conversation" aria-label="sort demo conversation">
       <div class="conversation-head">
-        <div class="avatar">S</div>
-        <div><strong>Sift</strong><span id="conversation-status">Ready when you are</span></div>
-        <span class="live-badge">24h memory</span>
+        <div class="avatar">s</div>
+        <div><strong>sort</strong><span id="conversation-status">Ready when you are</span></div>
+        <span class="live-badge">24h context</span>
       </div>
       <div id="notice" class="notice" role="status" hidden>
         <span id="notice-text"></span>
@@ -89,7 +89,7 @@
       <div id="transcript" class="transcript" role="log" aria-live="polite" aria-relevant="additions">
         <div class="empty-state" id="empty-state">
           <span class="empty-mark">✦</span>
-          <p>Drop in a screenshot or PDF, tell Sift something worth remembering, or use a starter above.</p>
+          <p>Drop in a screenshot or PDF, type something worth keeping, or use a starter above. sort works out what it is.</p>
         </div>
       </div>
 
@@ -104,8 +104,8 @@
           <button id="remove-file" type="button" aria-label="Remove attachment">×</button>
         </div>
         <label class="composer-input" id="drop-target">
-          <span class="sr-only">Message Sift</span>
-          <textarea id="message-input" name="message" rows="1" maxlength="2000" placeholder="Send Sift something to remember…"></textarea>
+          <span class="sr-only">Message sort</span>
+          <textarea id="message-input" name="message" rows="1" maxlength="2000" placeholder="Send it to sort…"></textarea>
           <span class="character-count" id="character-count">0 / 2,000</span>
         </label>
         <div class="composer-actions">
@@ -124,6 +124,6 @@
       <span>Messages and uploads are stored server-side for a fixed 24 hours, then deleted. Limits: 12 turns, four attachment turns, one file per turn, and 20 MB total. Start over deletes the session immediately.</span>
     </footer>
   </main>
-  <template id="typing-template"><div class="row assistant-row typing-row"><div class="bubble assistant-bubble typing"><i></i><i></i><i></i><span class="sr-only">Sift is responding</span></div></div></template>
+  <template id="typing-template"><div class="row assistant-row typing-row"><div class="bubble assistant-bubble typing"><i></i><i></i><i></i><span class="sr-only">sort is responding</span></div></div></template>
 </body>
 </html>

@@ -4,7 +4,7 @@ Updated: 2026-08-11 (Asia/Manila)
 
 ## Objective
 
-Make Sift assemble compact, identity-scoped evidence from persisted student data, answer grounded retrieval questions, and produce a concise weekly plan that names both a real Project 1 deadline and the student's saved café.
+Make sort assemble compact, identity-scoped evidence from persisted student data, answer grounded retrieval questions, and produce a concise weekly plan that names both a real Project 1 deadline and the student's saved café.
 
 ## Baseline and trace
 

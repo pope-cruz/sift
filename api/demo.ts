@@ -63,7 +63,7 @@ function errorResponse(error: unknown) {
     return { body: { error: { code: "CORRUPT_UPLOAD", message: error.userMessage } }, status: 400 };
   }
   console.error("demo api failed", safeDiagnostic(error));
-  return { body: { error: { code: "PROCESSING_FAILED", message: "Sift couldn't finish that request. Try it once more." } }, status: 500 };
+  return { body: { error: { code: "PROCESSING_FAILED", message: "sort couldn't finish that request. Try it once more." } }, status: 500 };
 }
 
 app.post("/api/demo", async (c) => {

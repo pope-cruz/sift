@@ -9,7 +9,7 @@ export const DEMO_LIMITS = {
   sessionsPerClient: 3,
 } as const;
 
-export const DEMO_TOKEN_STORAGE_KEY = "sift.demo.session.v1";
+export const DEMO_TOKEN_STORAGE_KEY = "sort.demo.session.v1";
 export const DEMO_ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 
 export class DemoError extends Error {

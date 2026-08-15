@@ -114,7 +114,7 @@ def build_pdf(filename, story):
         topMargin=0.8 * inch,
         bottomMargin=0.8 * inch,
         title=filename,
-        author="Sift live validation corpus",
+        author="sort live validation corpus",
     )
     document.build(story, onFirstPage=footer, onLaterPages=footer)
     return path

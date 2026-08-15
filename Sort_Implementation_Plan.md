@@ -1,8 +1,8 @@
-# Sift — Implementation Plan
+# sort — Implementation Plan
 
-**Written:** Aug 10, 2026 (rev 2, after repo scaffold) · **Deadline:** Aug 21, 2026 (11 days) · **Companion docs:** `Sift_Fable_Architecture_Brief.md`, `Sift_Brief_Audit.md`
+**Written:** Aug 10, 2026 (rev 2, after repo scaffold) · **Deadline:** Aug 21, 2026 (11 days) · **Companion docs:** `Sort_Fable_Architecture_Brief.md`, `Sort_Brief_Audit.md`
 
-All Photon claims below were verified against photon.codes docs on Aug 10, then re-checked against the vendored SDK docs in the repo (`.agents/skills/spectrum/`, authoritative for the pinned `spectrum-ts@12.7.0`). **Repo state:** `~/code/sift` is a scaffolded Spectrum starter — `spectrum-ts` installed, credentials in `.env` (`PROJECT_ID`/`PROJECT_SECRET`), and a working echo loop in `src/index.ts`. Day one starts from a running transport, not from npm init.
+All Photon claims below were verified against photon.codes docs on Aug 10, then re-checked against the vendored SDK docs in the repo (`.agents/skills/spectrum/`, authoritative for the pinned `spectrum-ts@12.7.0`). **Repo state:** `~/code/sort` is a scaffolded Spectrum starter — `spectrum-ts` installed, credentials in `.env` (`PROJECT_ID`/`PROJECT_SECRET`), and a working echo loop in `src/index.ts`. Day one starts from a running transport, not from npm init.
 
 ---
 
@@ -20,7 +20,7 @@ Why the docs settle this:
 iMessage ⇄ Photon line
               ⇅ spectrum-ts (message loop + space.get/send + getAttachment)
        ┌────────────────────────────┐
-       │  Sift worker (Railway)     │
+       │  sort worker (Railway)     │
        │  Node 22 + TypeScript      │
        │  • inbound loop            │──── Claude API (claude-haiku-4-5)
        │  • reminder cron (in-proc) │──── Supabase (Postgres + Storage)
@@ -39,12 +39,12 @@ Landing page: static Next.js on Vercel (separate, no backend coupling)
 | **A captioned attachment is ONE message, not two:** `content.type === "group"` with `items` = `[attachment, text]` in that order. Verified on the real line (Phase 0) for `image/jpeg` and `application/pdf` — this replaces the burst batcher Phase 2 originally called for | Phase 0 spike + vendored messages.md (`"group"` → `items: Message[]`) |
 | `im.space.get(space.id)` → sendable Space for proactive messages (store `space.id` from the loop); `space.responding(fn)` wraps work in a typing indicator | vendored spaces-and-users.md |
 | **Shared-pool allowlist (Free/Pro plans):** proactive outreach requires the recipient to be registered as a project user in the Photon Dashboard, else sends fail with `Target not allowed for this project`; dedicated Business lines are exempt. On shared pools the line number can differ per recipient and per-phone routing is ignored | vendored providers/imessage.md |
-| Deliverability: **inbound-first is critical** (user texts Sift first — which is exactly our onboarding); 5,000 msgs/server/day, 50 *new* conversations/line/day (replies in existing conversations don't count); first message should be **text-only, no links** | imessage-deliverability |
+| Deliverability: **inbound-first is critical** (user texts sort first — which is exactly our onboarding); 5,000 msgs/server/day, 50 *new* conversations/line/day (replies in existing conversations don't count); first message should be **text-only, no links** | imessage-deliverability |
 | Recommended inbound shape: debounce bursts, split read → generate → send, idempotent sends via stable client GUIDs | vendored best-practices.md |
 
 The repo also ships a `photon` CLI skill (`photon projects show`, `photon spectrum lines list`) for checking the plan tier and line — used in Phase 0.
 
-Deliverability implications for the demo: the student always texts first (`Start Sift`), so the proactive reminder goes to an **existing** conversation — safe. Keep the welcome message link-free. Aim for ≥3 user messages in the conversation before the proactive send (the demo script naturally does this).
+Deliverability implications for the demo: the student always texts first (`Start sort`), so the proactive reminder goes to an **existing** conversation — safe. Keep the welcome message link-free. Aim for ≥3 user messages in the conversation before the proactive send (the demo script naturally does this).
 
 ## LLM: split by call — Haiku 4.5 for routing, Sonnet 5 for reading
 
@@ -62,7 +62,7 @@ Both models support **structured outputs** — `client.messages.parse()` with `z
 
 Budget, measured with `count_tokens` against the real demo files: the 3-page syllabus is **7,713** input tokens on Sonnet (6,945 on Haiku), the café screenshot **2,083** (1,574). A full end-to-end demo run lands near **$0.10** on this split — roughly 250 runs inside a $25 budget, with tuning iterations on the syllabus as the dominant real cost. Set a hard spend limit in the console rather than trusting the estimate.
 
-Open question for Phase 2: Sonnet with thinking is slower than Haiku on a 3-page PDF. The demo beat is `Sifting...` → reply, so **time the extraction turn during rehearsal**; if it drags the two-minute video, drop `effort` to `low` before switching models.
+Open question for Phase 2: Sonnet with thinking is slower than Haiku on a 3-page PDF. The demo beat is `Sorting...` → reply, so **time the extraction turn during rehearsal**; if it drags the two-minute video, drop `effort` to `low` before switching models.
 
 ## Data model (Supabase)
 
@@ -122,8 +122,8 @@ The scaffold covers half of this already. Remaining, against the real line:
 - Fix the echo loop's missing self-message filter: `if (message.direction === "outbound") continue;` first thing in the loop.
 - Supabase project + schema above; storage bucket for attachments.
 - Worker skeleton deployed to Railway (loop + graceful shutdown via `app.stop()` + env config).
-- Message persistence with the dedup insert; `Start Sift` → seeded demo student (store `space.id` on the student row as `photon_space_id`) + text-only welcome.
-- Wrap LLM turns in `space.responding(...)` so the typing indicator shows while Sift thinks; send the literal `Sifting...` message for ingest turns per the demo script.
+- Message persistence with the dedup insert; `Start sort` → seeded demo student (store `space.id` on the student row as `photon_space_id`) + text-only welcome.
+- Wrap LLM turns in `space.responding(...)` so the typing indicator shows while sort thinks; send the literal `Sorting...` message for ingest turns per the demo script.
 
 **Exit test:** brief's acceptance test 1 (messaging), plus: redeliver/resend the same message id → exactly one row, one reply.
 
@@ -131,7 +131,7 @@ The scaffold covers half of this already. Remaining, against the real line:
 - **Group unwrap (replaces the planned burst batcher).** Phase 0 disproved the premise this section was built on. A caption typed alongside an attachment does **not** arrive as two messages — the provider delivers **one message with `content.type === "group"`**, whose `items` carry both parts, ordered **attachment first, then text**. Verified on the real line for both `image/jpeg` and `application/pdf`. So a turn's unit of work is *the content parts of one message*, not *a batch of messages*: flatten `group.items` into parts, then route by the part types present. Collect parts by type — never assume caption-before-file ordering. This is the `parts()` helper already in `src/index.ts` from Phase 0.
 - **No `batch_queue` table, no debounce, for the demo.** Both demo ingest steps are single captioned sends, which the group unwrap handles completely. Skip the queue table, the per-space timers, and their crash-recovery semantics. If genuine multi-*message* bursts show up in rehearsal (two separate sends in quick succession), revisit the vendored best-practices debounce then — it is no longer on the critical path.
 - Intent classifier: one Haiku structured-output call over the batched turn → `ingest | retrieve | plan | clarify | chitchat` (the audit's "none of the above" default: chitchat gets a short friendly reply).
-- PDF ingest: syllabus → `document` block → Zod-validated extraction `{title, topics[], events[{name, date, kind}]}` → rows in `items` + `actions`. Send the "Sifting..." pre-reply before the LLM call for the demo feel.
+- PDF ingest: syllabus → `document` block → Zod-validated extraction `{title, topics[], events[{name, date, kind}]}` → rows in `items` + `actions`. Send the "Sorting..." pre-reply before the LLM call for the demo feel.
 - Screenshot ingest: café post → `image` block → `{name, location?, caption, category: "study_spot"}`.
 - Tune against the **one known syllabus PDF and one known screenshot** — per the locked scope, generality is not the goal.
 
@@ -154,7 +154,7 @@ The scaffold covers half of this already. Remaining, against the real line:
 - Static Next.js page on Vercel: cream background `#FFF8F0`-ish, persimmon accent, near-black text; tagline, the Send → Understand → Remember → Ask loop, embedded demo video slot, clearly-labeled interactive simulation replaying the seeded demo script.
 - Fallback package per the brief: page + video + simulation + GitHub link. The simulation reuses the real reply copy from Phases 2–4 so it's faithful.
 
-**Exit test:** acceptance test 5 — a first-time viewer understands Sift in under 30 seconds.
+**Exit test:** acceptance test 5 — a first-time viewer understands sort in under 30 seconds.
 
 ### Phase 6 — Submission assets (Days 9–11, protected)
 - Run the full demo script on the real line; screen-record the two-minute video; host on **YouTube/Vimeo/Loom** (a submission requirement).
@@ -233,7 +233,7 @@ Context assembly for answer/plan: student profile JSON + open `actions` within 1
 
 ### Failure behavior (the audit's open item)
 
-- Any LLM/extraction/DB error inside a turn → reply `"Hmm, I had trouble sifting that — mind sending it again?"` and log the error. Never crash the loop; wrap each turn in try/catch.
+- Any LLM/extraction/DB error inside a turn → reply `"Hmm, I had trouble sorting that — mind sending it again?"` and log the error. Never crash the loop; wrap each turn in try/catch.
 - A turn is processed in one pass from the live message, so there is no queue to drain and nothing to clean up on crash. A message lost to a crash mid-turn is re-sent by the user; the dedup insert keeps a retry from double-writing.
 - Unknown content types (voice, reactions, etc.): ignore silently except reactions, which never warrant a reply. `read` receipts arrive as their own messages on this line and must be skipped before any turn work.
 

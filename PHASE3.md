@@ -1,6 +1,6 @@
 # Phase 3 — Retrieve & Plan
 
-Phase 3 turns persisted Sift data into grounded retrieval answers and concise weekly plans. Phase 2 ingest remains frozen: this phase reads its `students`, `items`, `actions`, and `messages` rows but does not reinterpret attachment bytes or extracted documents.
+Phase 3 turns persisted sort data into grounded retrieval answers and concise weekly plans. Phase 2 ingest remains frozen: this phase reads its `students`, `items`, `actions`, and `messages` rows but does not reinterpret attachment bytes or extracted documents.
 
 ## Context architecture
 
@@ -40,7 +40,7 @@ The live answer is rejected before delivery unless it contains the first chronol
 
 ## Failure behavior
 
-- Database/model failures inside a turn produce: `Hmm, I had trouble sifting that — mind sending it again?`
+- Database/model failures inside a turn produce: `Hmm, I had trouble sorting that — mind sending it again?`
 - A database failure before turn routing attempts the same useful reply without trying to persist it.
 - A provider outage cannot receive a reply, but the recovery send is swallowed so the long-running worker continues.
 - Raw provider/database errors are redacted before logging and are never passed into the answering model.
@@ -96,7 +96,7 @@ The first syllabus attempt exposed a schema-invalid metadata field. It stopped b
 
 - Retrieval uses deterministic lexical ranking over the latest 50 items rather than vector search; vector search remains deliberately out of scope.
 - The schema has no soft-delete or expiry columns. The boundary filters the available lifecycle field (`actions.status`) and cannot apply item lifecycle states that do not exist.
-- A lighter-day recommendation requires schedule evidence in `students.profile`; Sift does not infer a calendar.
+- A lighter-day recommendation requires schedule evidence in `students.profile`; sort does not infer a calendar.
 
 ## Freeze decision and Phase 4
 

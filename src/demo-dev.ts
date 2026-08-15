@@ -11,8 +11,8 @@ const localApp = new Hono();
 // Local-only defaults: production still requires explicit secrets and starts
 // disabled. These values never leave the developer machine.
 process.env.DEMO_ENABLED ??= "true";
-process.env.DEMO_TOKEN_SECRET ??= "sift-local-demo-token-secret-not-for-production";
-process.env.CRON_SECRET ??= "sift-local-cron-secret";
+process.env.DEMO_TOKEN_SECRET ??= "sort-local-demo-token-secret-not-for-production";
+process.env.CRON_SECRET ??= "sort-local-cron-secret";
 
 // The production deployment uses Vercel rewrites. Locally, serve the exact
 // same files and Hono API directly so testing never requires linking a project.
@@ -28,7 +28,7 @@ localApp.get("/demo", serveStatic({ path: "./web/demo/index.html" }));
 localApp.get("/", serveStatic({ path: "./web/index.html" }));
 
 serve({ fetch: localApp.fetch, port }, (info) => {
-  console.log(`Sift demo: http://localhost:${info.port}/demo/`);
+  console.log(`sort demo: http://localhost:${info.port}/demo/`);
 });
 
 void db.from("students").select("channel").limit(1).then(({ error }) => {

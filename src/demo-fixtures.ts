@@ -61,22 +61,22 @@ export async function demoScenario(id: DemoScenarioId, timezone: string, now = n
     title = "CS 201 · Current syllabus";
     eyebrow = "Course schedule";
     lines = [`Reading quiz — due ${longDate(dates.soon)}`, `Project 1 — due ${longDate(dates.later)} at 11:59 PM`, "Office hours — Monday, 2–4 PM"];
-    caption = "Save this current syllabus and track its deadlines.";
-    label = "Find syllabus deadlines";
+    caption = "sort this syllabus and keep its deadlines.";
+    label = "Sort this syllabus";
     presentation = { type: "deadline_list", title: "Dates in this syllabus", items: [{ label: "Reading quiz", date: dates.soon }, { label: "Project 1", date: dates.later }] };
   } else if (id === "cafe") {
     title = "Radio Bakery";
     eyebrow = "Saved post · Greenpoint";
     lines = ["Quiet upstairs tables", "Good outlets · strong coffee", "Best order: twice-baked pistachio croissant"];
-    caption = "Remember this café for a study session.";
-    label = "Remember a café";
+    caption = "Save this place for a study session.";
+    label = "Save this place";
     presentation = { type: "saved_place", title: "Radio Bakery", detail: "Greenpoint · quiet upstairs tables" };
   } else {
     title = "Product Design Intern";
     eyebrow = "Northline Labs · Summer role";
     lines = [`Applications close ${longDate(dates.application)}`, "Portfolio and short cover note required", "Submit through the candidate portal"];
     caption = `Save this application and remind me before the ${longDate(dates.application)} deadline.`;
-    label = "Schedule an application reminder";
+    label = "Remember this opportunity";
     presentation = { type: "task_list", title: "Application", items: [{ label: "Submit Northline application", date: dates.application }] };
   }
 
@@ -85,7 +85,7 @@ export async function demoScenario(id: DemoScenarioId, timezone: string, now = n
     id,
     label,
     caption,
-    attachment: { id: `demo-${id}-${localToday}`, name: `sift-demo-${id}.png`, mimeType: "image/png", size: bytes.length, read: async () => bytes },
+    attachment: { id: `demo-${id}-${localToday}`, name: `sort-demo-${id}.png`, mimeType: "image/png", size: bytes.length, read: async () => bytes },
     presentation,
   };
 }

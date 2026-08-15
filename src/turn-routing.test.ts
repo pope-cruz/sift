@@ -14,7 +14,7 @@ for (const transport of ["Spectrum", "web"] as const) {
   test(`${transport} adapter receives identical attachment routing`, async () => {
     const events: string[] = [];
     await routeActiveTurn({ text: "save this", attachmentCount: 1, channel: fakeChannel(events), ingest: async () => "Saved one deadline.", answer: async () => "unused" });
-    assert.deepEqual(events, ["send:Sifting...:transient", "typing:start", "send:Saved one deadline.", "typing:stop"]);
+    assert.deepEqual(events, ["send:Sorting...:transient", "typing:start", "send:Saved one deadline.", "typing:stop"]);
   });
 
   test(`${transport} adapter receives identical text routing`, async () => {

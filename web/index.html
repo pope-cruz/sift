@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sift — College is scattered. Sift through it.</title>
-<meta name="description" content="Send Sift a syllabus, link, screenshot, or plan. It finds what matters, remembers it, and helps you act — all through Messages.">
-<meta property="og:title" content="Sift — College is scattered. Sift through it.">
-<meta property="og:description" content="Send Sift a syllabus, link, screenshot, or plan. It finds what matters, remembers it, and helps you act — all through Messages.">
+<title>sort — College is scattered. sort it.</title>
+<meta name="description" content="Send sort a syllabus, screenshot, link, or random thought. It figures out what matters, puts it where it belongs, and brings it back when you need it.">
+<meta property="og:title" content="sort — College is scattered. sort it.">
+<meta property="og:description" content="Send sort a syllabus, screenshot, link, or random thought. It figures out what matters, puts it where it belongs, and brings it back when you need it.">
 <meta property="og:type" content="website">
 <meta name="theme-color" content="#F6F4EE">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23191815'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23C94F32'/%3E%3C/svg%3E">
@@ -23,10 +23,10 @@ p{text-wrap:pretty}
 button{font-family:inherit}
 summary::-webkit-details-marker{display:none}
 ::selection{background:#C94F32;color:#FCFBF7}
-@keyframes sift-rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-@keyframes sift-reveal{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
-@keyframes sift-converge{from{opacity:0;transform:translate(0,0) rotate(var(--r0,0deg)) scale(.97)}to{opacity:1;transform:translate(var(--tx,0px),var(--ty,0px)) rotate(var(--r1,0deg)) scale(1)}}
-@keyframes sift-dot{0%,65%,100%{opacity:.3;transform:translateY(0)}30%{opacity:.95;transform:translateY(-3px)}}
+@keyframes sort-rise{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes sort-reveal{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+@keyframes sort-converge{from{opacity:0;transform:translate(0,0) rotate(var(--r0,0deg)) scale(.97)}to{opacity:1;transform:translate(var(--tx,0px),var(--ty,0px)) rotate(var(--r1,0deg)) scale(1)}}
+@keyframes sort-dot{0%,65%,100%{opacity:.3;transform:translateY(0)}30%{opacity:.95;transform:translateY(-3px)}}
 @media (prefers-reduced-motion: reduce){*{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}html{scroll-behavior:auto}}
 
 /* hover / focus states (were style-hover / style-focus attributes in the design file) */
@@ -49,11 +49,11 @@ summary::-webkit-details-marker{display:none}
 <header style="position:sticky;top:0;z-index:40;background:#F6F4EE;border-bottom:1px solid rgba(28,28,25,.09)">
 <nav style="max-width:1320px;margin:0 auto;padding:0 clamp(20px,4vw,52px);height:60px;display:flex;align-items:center;justify-content:space-between;gap:20px">
 <a href="#top" style="display:flex;align-items:center;gap:9px;font-size:18px;font-weight:600;letter-spacing:-.025em">
-<span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>Sift</a>
+<span style="width:8px;height:8px;border-radius:50%;background:var(--accent);display:inline-block"></span>sort</a>
 <div style="display:flex;align-items:center;gap:clamp(16px,2.2vw,28px)">
 <a href="#how" style="font-size:14px;font-weight:500;color:#55534D">How it works</a>
 <a href="#privacy" style="font-size:14px;font-weight:500;color:#55534D">Privacy</a>
-<a href="/demo/" class="btn-dark" style="font-size:14px;font-weight:500;color:#FCFBF7;background:#191815;padding:9px 15px;border-radius:11px">Open interactive demo</a>
+<a href="/demo/" class="btn-dark" style="font-size:14px;font-weight:500;color:#FCFBF7;background:#191815;padding:9px 15px;border-radius:11px">Try sort</a>
 </div>
 </nav>
 </header>
@@ -61,14 +61,14 @@ summary::-webkit-details-marker{display:none}
 <section id="top" style="max-width:1320px;margin:0 auto;padding:clamp(52px,6vw,88px) clamp(20px,4vw,52px) 0">
 <h1 style="margin:0;font-size:clamp(4rem,8vw,7.5rem);line-height:.92;letter-spacing:-.05em;font-weight:600">
 <span style="display:block">College is scattered.</span>
-<span style="display:block">Sift through it.</span>
+<span style="display:block">sort it.</span>
 </h1>
 <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:clamp(24px,4vw,64px);margin-top:clamp(26px,2.6vw,38px)">
-<p style="margin:0;flex:1 1 420px;max-width:620px;font-size:clamp(19px,1.5vw,22px);line-height:1.45;color:#55534D">Send Sift a syllabus, link, screenshot, or plan. It finds what matters, remembers it, and helps you act—all through Messages.</p>
+<p style="margin:0;flex:1 1 420px;max-width:620px;font-size:clamp(19px,1.5vw,22px);line-height:1.45;color:#55534D">Send sort a syllabus, screenshot, link, or random thought. It figures out what matters, puts it where it belongs, and brings it back when you need it.</p>
 <div style="flex:0 0 auto;display:flex;flex-direction:column;gap:9px">
 <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px">
-<a href="/demo/" class="btn-dark" style="display:inline-flex;align-items:center;gap:8px;background:#1C1C19;color:#FCFBF7;font-size:16px;font-weight:500;padding:13px 22px;border-radius:14px">Open the interactive demo <span style="font-size:14px">&#8594;</span></a>
-<a href="#how" class="btn-ghost" style="display:inline-flex;align-items:center;font-size:16px;font-weight:500;padding:12px 18px;color:#1C1C19;border:1px solid #DCD8CE;border-radius:14px">See how it works</a>
+<a href="/demo/" class="btn-dark" style="display:inline-flex;align-items:center;gap:8px;background:#1C1C19;color:#FCFBF7;font-size:16px;font-weight:500;padding:13px 22px;border-radius:14px">Try sort <span style="font-size:14px">&#8594;</span></a>
+<a href="#how" class="btn-ghost" style="display:inline-flex;align-items:center;font-size:16px;font-weight:500;padding:12px 18px;color:#1C1C19;border:1px solid #DCD8CE;border-radius:14px">See what sorting looks like</a>
 </div>
 <span style="font-size:13px;color:#817E76">No signup required.</span>
 </div>
@@ -84,9 +84,9 @@ summary::-webkit-details-marker{display:none}
 
 <div style="background:#FCFBF7;border:1px solid #DCD8CE;border-radius:22px;overflow:hidden;display:flex;flex-direction:column;height:clamp(470px,54vh,560px);box-shadow:0 12px 32px rgba(28,28,25,.08)">
 <div style="display:flex;align-items:center;gap:10px;padding:12px 18px;border-bottom:1px solid #E6E2D8;background:#F2F0E9">
-<span style="width:28px;height:28px;border-radius:50%;background:var(--accent);color:#FCFBF7;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">S</span>
+<span style="width:28px;height:28px;border-radius:50%;background:var(--accent);color:#FCFBF7;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600">s</span>
 <span style="display:flex;flex-direction:column;line-height:1.2">
-<span style="font-size:14px;font-weight:600">Sift</span>
+<span style="font-size:14px;font-weight:600">sort</span>
 <span style="font-size:11.5px;color:#817E76">iMessage</span>
 </span>
 </div>
@@ -106,14 +106,14 @@ summary::-webkit-details-marker{display:none}
 
 <section style="background:#EEE9DE;border-top:1px solid rgba(28,28,25,.07);border-bottom:1px solid rgba(28,28,25,.07);padding:clamp(68px,8vw,116px) clamp(20px,4vw,52px)">
 <div style="max-width:1160px;margin:0 auto">
-<div data-reveal style="max-width:820px;animation:sift-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<div data-reveal style="max-width:820px;animation:sort-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
 <h2 style="margin:0;font-size:clamp(3rem,5vw,5rem);line-height:.96;letter-spacing:-.045em;font-weight:600">Your college life doesn&#8217;t arrive neatly.</h2>
 <p style="margin:22px 0 0;max-width:580px;font-size:clamp(19px,1.5vw,21px);line-height:1.45;color:#55534D">It shows up in syllabi, screenshots, group chats, event posters, saved posts, and tabs you swear you&#8217;ll return to.</p>
 </div>
 
 <div class="art-desktop" style="position:relative;container-type:inline-size;height:clamp(430px,40vw,510px);margin:clamp(26px,3.4vw,46px) 0 0">
 
-<div data-artifact style="--r0:-7deg;--r1:-3deg;--tx:12.9cqw;--ty:8.2cqw;position:absolute;left:0;top:2%;width:206px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:3px;padding:15px 16px;box-shadow:none;animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:-7deg;--r1:-3deg;--tx:12.9cqw;--ty:8.2cqw;position:absolute;left:0;top:2%;width:206px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:3px;padding:15px 16px;box-shadow:none;animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-size:9.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#817E76">Syllabus &#183; Fall</div>
 <div style="font-size:13px;font-weight:600;margin:6px 0 10px;letter-spacing:-.01em">CSCI-UA 201<br>Computer Systems</div>
 <div style="border-top:1px solid #E4E0D6;padding-top:8px;font-size:11px;line-height:1.6;color:#55534D">
@@ -123,13 +123,13 @@ summary::-webkit-details-marker{display:none}
 </div>
 </div>
 
-<div data-artifact style="--r0:6deg;--r1:2deg;--tx:-11.8cqw;--ty:8.9cqw;animation-delay:80ms;position:absolute;right:1%;top:0;width:148px;background:#191815;padding:18px 15px 20px;animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:6deg;--r1:2deg;--tx:-11.8cqw;--ty:8.9cqw;animation-delay:80ms;position:absolute;right:1%;top:0;width:148px;background:#191815;padding:18px 15px 20px;animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-size:30px;line-height:.9;font-weight:600;letter-spacing:-.045em;color:var(--accent)">SPRING<br>FEST</div>
 <div style="margin-top:14px;height:1px;background:rgba(246,244,238,.22)"></div>
 <div style="margin-top:10px;font-size:10.5px;line-height:1.5;color:rgba(246,244,238,.62)">SAT 8PM<br>KIMMEL 802<br>FREE W/ ID</div>
 </div>
 
-<div data-artifact style="--r0:-3deg;--r1:-1deg;--tx:1cqw;--ty:6.8cqw;animation-delay:150ms;position:absolute;left:37%;top:1%;width:188px;background:#FCFBF7;border-radius:14px;padding:11px 11px 13px;box-shadow:0 12px 32px rgba(28,28,25,.08);animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:-3deg;--r1:-1deg;--tx:1cqw;--ty:6.8cqw;animation-delay:150ms;position:absolute;left:37%;top:1%;width:188px;background:#FCFBF7;border-radius:14px;padding:11px 11px 13px;box-shadow:0 12px 32px rgba(28,28,25,.08);animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-size:9.5px;color:#817E76;margin-bottom:9px">Screenshot &#183; 11:42 PM</div>
 <div style="display:flex;flex-direction:column;gap:6px">
 <span style="align-self:flex-start;max-width:86%;background:#E5E1D7;border-radius:11px;padding:6px 9px;font-size:10.5px;line-height:1.35">did anyone get the room change?</span>
@@ -137,7 +137,7 @@ summary::-webkit-details-marker{display:none}
 </div>
 </div>
 
-<div data-artifact style="--r0:5deg;--r1:2deg;--tx:11.3cqw;--ty:-5.2cqw;animation-delay:220ms;position:absolute;left:6%;bottom:2%;width:170px;background:#FCFBF7;padding:9px 9px 0;box-shadow:0 14px 30px rgba(28,28,25,.12);animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:5deg;--r1:2deg;--tx:11.3cqw;--ty:-5.2cqw;animation-delay:220ms;position:absolute;left:6%;bottom:2%;width:170px;background:#FCFBF7;padding:9px 9px 0;box-shadow:0 14px 30px rgba(28,28,25,.12);animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="position:relative;height:106px;background:#D8C9B2;overflow:hidden">
 <div style="position:absolute;left:-12px;bottom:-16px;width:96px;height:96px;border-radius:50%;background:#C6B295"></div>
 <div style="position:absolute;right:10px;top:16px;width:70px;height:46px;border-radius:8px 8px 22px 22px;background:#CDBB9F"></div>
@@ -146,7 +146,7 @@ summary::-webkit-details-marker{display:none}
 <div style="padding:9px 3px 11px;font-size:10.5px;color:#55534D">radiobakery <span style="color:#7D8463">&#183; Greenpoint</span></div>
 </div>
 
-<div data-artifact style="--r0:-5deg;--r1:-2deg;--tx:-7cqw;--ty:-6.8cqw;animation-delay:290ms;position:absolute;right:4%;bottom:4%;width:208px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:12px;padding:14px;box-shadow:0 6px 16px rgba(28,28,25,.05);animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:-5deg;--r1:-2deg;--tx:-7cqw;--ty:-6.8cqw;animation-delay:290ms;position:absolute;right:4%;bottom:4%;width:208px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:12px;padding:14px;box-shadow:0 6px 16px rgba(28,28,25,.05);animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="display:flex;gap:10px;align-items:center">
 <span style="width:26px;height:26px;border-radius:7px;background:#191815;color:#FCFBF7;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600">N</span>
 <span style="display:flex;flex-direction:column"><span style="font-size:12.5px;font-weight:600">Product Design Intern</span><span style="font-size:11px;color:#817E76">Northline Labs &#183; NYC</span></span>
@@ -154,55 +154,55 @@ summary::-webkit-details-marker{display:none}
 <div style="margin-top:11px;padding-top:9px;border-top:1px solid #E9E5DB;display:flex;justify-content:space-between;font-size:11px;color:#817E76"><span>Summer 2027</span><span style="color:var(--accent)">Closes Aug 24</span></div>
 </div>
 
-<div data-artifact style="--r0:4deg;--r1:1deg;--tx:0cqw;--ty:-6.8cqw;animation-delay:360ms;position:absolute;left:42%;bottom:0;width:180px;background:#EFE3C8;padding:16px 16px 18px;animation:sift-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:4deg;--r1:1deg;--tx:0cqw;--ty:-6.8cqw;animation-delay:360ms;position:absolute;left:42%;bottom:0;width:180px;background:#EFE3C8;padding:16px 16px 18px;animation:sort-converge 860ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-family:'Newsreader',Georgia,serif;font-style:italic;font-size:18px;line-height:1.3;color:#3B372C">office hrs thurs 2pm &#8212; ask about the extension</div>
 </div>
 
 <div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;display:flex;flex-direction:column;align-items:center;gap:10px">
-<span style="font-size:12px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:#817E76">Sift</span>
-<span style="background:#191815;color:#F6F4EE;border-radius:20px;padding:15px 26px;font-size:clamp(19px,1.9vw,25px);font-weight:500;letter-spacing:-.025em;box-shadow:0 16px 40px rgba(28,28,25,.16)">Just send it here.</span>
+<span style="font-size:12px;font-weight:500;letter-spacing:.06em;color:#817E76">sort</span>
+<span style="background:#191815;color:#F6F4EE;border-radius:20px;padding:15px 26px;font-size:clamp(19px,1.9vw,25px);font-weight:500;letter-spacing:-.025em;box-shadow:0 16px 40px rgba(28,28,25,.16)">Send it to sort.</span>
 </div>
 </div>
 
 <div class="art-mobile" style="flex-direction:column;align-items:center;gap:22px;margin-top:32px">
 <div style="display:flex;flex-wrap:wrap;justify-content:center;gap:14px">
-<div data-artifact style="--r0:-6deg;--r1:-3deg;--tx:0px;--ty:8px;width:150px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:3px;padding:12px;box-shadow:none;animation:sift-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:-6deg;--r1:-3deg;--tx:0px;--ty:8px;width:150px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:3px;padding:12px;box-shadow:none;animation:sort-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:#817E76">Syllabus</div>
 <div style="font-size:12px;font-weight:600;margin:5px 0 8px">CSCI-UA 201</div>
 <div style="border-top:1px solid #E4E0D6;padding-top:7px;font-size:10.5px;line-height:1.55;color:#55534D">Wk 3 &#8212; Project 1 due Aug 17</div>
 </div>
-<div data-artifact style="--r0:5deg;--r1:2deg;--tx:0px;--ty:8px;animation-delay:90ms;width:136px;background:#FCFBF7;padding:8px 8px 0;box-shadow:0 10px 24px rgba(28,28,25,.10);animation:sift-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:5deg;--r1:2deg;--tx:0px;--ty:8px;animation-delay:90ms;width:136px;background:#FCFBF7;padding:8px 8px 0;box-shadow:0 10px 24px rgba(28,28,25,.10);animation:sort-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="position:relative;height:84px;background:#D8C9B2;overflow:hidden">
 <div style="position:absolute;left:-10px;bottom:-14px;width:76px;height:76px;border-radius:50%;background:#C6B295"></div>
 <div style="position:absolute;right:8px;top:12px;width:56px;height:38px;border-radius:8px 8px 18px 18px;background:#CDBB9F"></div>
 </div>
 <div style="padding:8px 2px 10px;font-size:10px;color:#55534D">radiobakery</div>
 </div>
-<div data-artifact style="--r0:-4deg;--r1:-1deg;--tx:0px;--ty:8px;animation-delay:180ms;width:124px;background:#191815;padding:14px 12px 16px;animation:sift-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:-4deg;--r1:-1deg;--tx:0px;--ty:8px;animation-delay:180ms;width:124px;background:#191815;padding:14px 12px 16px;animation:sort-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-size:23px;line-height:.9;font-weight:600;letter-spacing:-.04em;color:var(--accent)">SPRING<br>FEST</div>
 <div style="margin-top:10px;font-size:9.5px;line-height:1.5;color:rgba(246,244,238,.6)">SAT 8PM &#183; KIMMEL</div>
 </div>
-<div data-artifact style="--r0:4deg;--r1:1deg;--tx:0px;--ty:8px;animation-delay:270ms;width:152px;background:#EFE3C8;padding:13px;animation:sift-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
+<div data-artifact style="--r0:4deg;--r1:1deg;--tx:0px;--ty:8px;animation-delay:270ms;width:152px;background:#EFE3C8;padding:13px;animation:sort-converge 780ms cubic-bezier(.22,.7,.24,1) both;animation-play-state:paused">
 <div style="font-family:'Newsreader',Georgia,serif;font-style:italic;font-size:16px;line-height:1.3;color:#3B372C">office hrs thurs 2pm</div>
 </div>
 </div>
-<span style="background:#191815;color:#F6F4EE;border-radius:18px;padding:14px 22px;font-size:19px;font-weight:500;letter-spacing:-.025em">Just send it here.</span>
+<span style="background:#191815;color:#F6F4EE;border-radius:18px;padding:14px 22px;font-size:19px;font-weight:500;letter-spacing:-.025em">Send it to sort.</span>
 </div>
 
-<p data-reveal style="margin:clamp(26px,3vw,40px) 0 0;max-width:620px;font-size:clamp(19px,1.7vw,24px);line-height:1.4;letter-spacing:-.015em;font-weight:500;color:#1C1C19;animation:sift-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">No folders to maintain. No system to organize. One contact that remembers.</p>
+<p data-reveal style="margin:clamp(26px,3vw,40px) 0 0;max-width:620px;font-size:clamp(19px,1.7vw,24px);line-height:1.4;letter-spacing:-.015em;font-weight:500;color:#1C1C19;animation:sort-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">No folders to maintain. No system to keep up with. You send the mess; sort does the sorting.</p>
 </div>
 </section>
 
 <section style="max-width:1320px;margin:0 auto;padding:clamp(60px,6.5vw,96px) clamp(20px,4vw,52px) clamp(40px,4.5vw,64px)">
-<div data-reveal style="display:flex;flex-wrap:wrap;align-items:baseline;gap:16px 28px;animation:sift-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
-<h2 style="margin:0;font-size:clamp(2rem,3.4vw,3.25rem);line-height:1;letter-spacing:-.04em;font-weight:600">Send it once. Sift it later.</h2>
-<span style="font-size:13px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:#817E76">Three things it does</span>
+<div data-reveal style="display:flex;flex-wrap:wrap;align-items:baseline;gap:16px 28px;animation:sort-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<h2 style="margin:0;font-size:clamp(2rem,3.4vw,3.25rem);line-height:1;letter-spacing:-.04em;font-weight:600">Send it once. Find it sorted.</h2>
+<span style="font-size:13px;font-weight:500;letter-spacing:.05em;text-transform:uppercase;color:#817E76">Three things people send</span>
 </div>
 
-<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:start;margin-top:clamp(34px,4vw,58px);animation:sift-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:start;margin-top:clamp(34px,4vw,58px);animation:sort-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
 <div style="max-width:400px">
-<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)">Understand</span>
-<p style="margin:12px 0 22px;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Sift reads what you send and pulls out the parts that matter.</p>
+<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)">A syllabus</span>
+<p style="margin:12px 0 22px;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Eight pages of PDF, sorted into dated deadlines and the course they belong to.</p>
 </div>
 <div style="display:flex;align-items:flex-start;gap:18px">
 <div style="flex:0 0 120px;background:#FCFBF7;border:1px solid #DCD8CE;border-radius:3px;padding:12px;font-size:9.5px;line-height:1.7;color:#817E76">
@@ -221,10 +221,10 @@ summary::-webkit-details-marker{display:none}
 </div>
 </div>
 
-<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:center;margin-top:clamp(40px,4.6vw,72px);padding:clamp(22px,2.6vw,36px);background:#EEE9DE;border-radius:20px;animation:sift-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:center;margin-top:clamp(40px,4.6vw,72px);padding:clamp(22px,2.6vw,36px);background:#EEE9DE;border-radius:20px;animation:sort-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
 <div style="max-width:380px">
-<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#7D8463">Remember</span>
-<p style="margin:12px 0 0;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Ask naturally&#8212;even if you barely remember what you&#8217;re looking for.</p>
+<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:#7D8463">A caf&#233; link</span>
+<p style="margin:12px 0 0;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Sorted into a saved place, and findable weeks later in whatever words you have.</p>
 </div>
 <div style="display:flex;flex-direction:column;gap:9px;max-width:440px;width:100%;justify-self:end">
 <span style="align-self:flex-end;background:#1684FC;color:#FCFBF7;border-radius:18px;padding:11px 15px;font-size:15.5px;line-height:1.4;max-width:82%">What was that caf&#233; in Brooklyn?</span>
@@ -232,7 +232,7 @@ summary::-webkit-details-marker{display:none}
 </div>
 </div>
 
-<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:center;margin-top:clamp(40px,4.6vw,72px);animation:sift-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<div data-reveal style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:clamp(24px,3vw,52px);align-items:center;margin-top:clamp(40px,4.6vw,72px);animation:sort-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
 <div style="max-width:440px">
 <div style="font-size:15.5px;line-height:1.4;background:#E5E1D7;border-radius:18px;padding:11px 15px;display:inline-block;max-width:100%">Done &#8212; I&#8217;ll remind you next Wednesday to finish both applications.</div>
 <div style="margin-top:14px">
@@ -241,49 +241,49 @@ summary::-webkit-details-marker{display:none}
 </div>
 </div>
 <div style="max-width:380px;justify-self:end">
-<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)">Act</span>
-<p style="margin:12px 0 0;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Turn what Sift remembers into reminders and plans.</p>
+<span style="font-size:12.5px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)">A job listing</span>
+<p style="margin:12px 0 0;font-size:clamp(20px,1.8vw,25px);line-height:1.28;letter-spacing:-.02em;font-weight:500">Sorted into an opportunity with a real closing date, so a reminder is worth setting.</p>
 </div>
 </div>
 </section>
 
 <section id="how" style="max-width:1320px;margin:0 auto;padding:clamp(48px,5vw,76px) clamp(20px,4vw,52px) clamp(56px,6vw,88px);scroll-margin-top:70px">
-<div data-reveal style="animation:sift-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
-<h2 style="margin:0;max-width:640px;font-size:clamp(1.75rem,2.6vw,2.5rem);line-height:1.05;letter-spacing:-.035em;font-weight:600">Useful context, without the mystery.</h2>
+<div data-reveal style="animation:sort-reveal 700ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<h2 style="margin:0;max-width:640px;font-size:clamp(1.75rem,2.6vw,2.5rem);line-height:1.05;letter-spacing:-.035em;font-weight:600">What happens after you send it.</h2>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));margin-top:clamp(26px,3vw,44px);border-top:1px solid #CFCBC1">
 <div style="padding:16px 22px 4px 0">
 <div style="font-size:12px;font-weight:500;color:var(--accent);letter-spacing:.06em">01</div>
-<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Send</div>
-<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">Share a document, link, screenshot, place, or plan.</p>
+<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Send anything</div>
+<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">A PDF, a screenshot, a link, or a half-formed thought.</p>
 </div>
 <div style="padding:16px 22px 4px;border-left:1px solid #E4E0D6">
 <div style="font-size:12px;font-weight:500;color:var(--accent);letter-spacing:.06em">02</div>
-<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Understand</div>
-<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">Sift extracts what matters and keeps its source.</p>
+<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Understand it</div>
+<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">sort reads it and works out what it actually contains.</p>
 </div>
 <div style="padding:16px 22px 4px;border-left:1px solid #E4E0D6">
 <div style="font-size:12px;font-weight:500;color:var(--accent);letter-spacing:.06em">03</div>
-<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Remember</div>
-<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">Saved context stays tied to the person who sent it.</p>
+<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Sort it</div>
+<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">A deadline, a place, an opportunity, a fact &#8212; each kept with its source and connected to what you sorted before.</p>
 </div>
 <div style="padding:16px 0 4px 22px;border-left:1px solid #E4E0D6">
 <div style="font-size:12px;font-weight:500;color:var(--accent);letter-spacing:.06em">04</div>
-<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Act</div>
-<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">Ask a follow-up, set a reminder, or make a plan.</p>
+<div style="font-size:17px;font-weight:600;letter-spacing:-.02em;margin:8px 0 6px">Bring it back</div>
+<p style="margin:0;font-size:15px;line-height:1.45;color:#55534D">Ask for it later, or get a reminder when the information supports one.</p>
 </div>
 </div>
 </div>
 
-<div id="privacy" data-reveal style="margin-top:clamp(32px,3.6vw,52px);background:#191815;color:#F6F4EE;border-radius:20px;padding:clamp(24px,2.8vw,38px);scroll-margin-top:70px;animation:sift-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
+<div id="privacy" data-reveal style="margin-top:clamp(32px,3.6vw,52px);background:#191815;color:#F6F4EE;border-radius:20px;padding:clamp(24px,2.8vw,38px);scroll-margin-top:70px;animation:sort-reveal 760ms cubic-bezier(.2,.75,.25,1) both;animation-play-state:paused">
 <h3 style="margin:0;font-size:clamp(1.15rem,1.6vw,1.5rem);letter-spacing:-.025em;font-weight:600">Prototype transparency</h3>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:clamp(18px,2.4vw,36px);margin-top:22px">
 <div>
-<div style="font-size:14px;font-weight:600;margin-bottom:7px">What Sift stores</div>
-<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.66)">What you send it, the fields it extracts, and a pointer back to the source those fields came from.</p>
+<div style="font-size:14px;font-weight:600;margin-bottom:7px">What sort stores</div>
+<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.66)">What you send it, the fields it sorts out of that, and a pointer back to the source those fields came from.</p>
 </div>
 <div>
-<div style="font-size:14px;font-weight:600;margin-bottom:7px">How context is isolated</div>
-<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.66)">Saved context is scoped to the conversation it arrived in and is not shared between people.</p>
+<div style="font-size:14px;font-weight:600;margin-bottom:7px">How sorted context is isolated</div>
+<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.66)">Sorted context is scoped to the conversation it arrived in and is not shared between people.</p>
 </div>
 <div>
 <div style="font-size:14px;font-weight:600;margin-bottom:7px">What is deterministic here</div>
@@ -303,7 +303,7 @@ summary::-webkit-details-marker{display:none}
 </div>
 <div>
 <div style="font-size:14px;font-weight:600;margin-bottom:7px">Scope of this build</div>
-<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.6)">Three scenarios, fixed content, no signup, no accounts, no storage. It demonstrates the interaction, not the full system.</p>
+<p style="margin:0;font-size:14.5px;line-height:1.5;color:rgba(246,244,238,.6)">Four scenarios, fixed content, no signup, no accounts, no storage. It demonstrates the sorting behavior, not the full system.</p>
 </div>
 </div>
 </details>
@@ -312,13 +312,13 @@ summary::-webkit-details-marker{display:none}
 
 <section style="background:#191815;color:#F6F4EE;padding:clamp(68px,8vw,112px) clamp(20px,4vw,52px) clamp(34px,4vw,52px)">
 <div style="max-width:1320px;margin:0 auto">
-<h2 style="margin:0;max-width:840px;font-size:clamp(2.5rem,4.4vw,4.25rem);line-height:.98;letter-spacing:-.04em;font-weight:600">Stop losing the things you meant to remember.</h2>
+<h2 style="margin:0;max-width:840px;font-size:clamp(2.5rem,4.4vw,4.25rem);line-height:.98;letter-spacing:-.04em;font-weight:600">If it matters, send it to sort.</h2>
 <div style="display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:28px;margin-top:26px">
-<p style="margin:0;max-width:520px;font-size:clamp(19px,1.5vw,21px);line-height:1.45;color:rgba(246,244,238,.66)">Try Sift with a syllabus, a saved place, or an application deadline.</p>
-<a href="/demo/" class="btn-accent" style="display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#FCFBF7;font-size:16px;font-weight:500;padding:14px 24px;border-radius:14px">Open the interactive demo <span style="font-size:14px">&#8594;</span></a>
+<p style="margin:0;max-width:520px;font-size:clamp(19px,1.5vw,21px);line-height:1.45;color:rgba(246,244,238,.66)">Start with a syllabus, a place you want to keep, or a deadline you can&#8217;t miss.</p>
+<a href="/demo/" class="btn-accent" style="display:inline-flex;align-items:center;gap:8px;background:var(--accent);color:#FCFBF7;font-size:16px;font-weight:500;padding:14px 24px;border-radius:14px">Try sort <span style="font-size:14px">&#8594;</span></a>
 </div>
 <div style="display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center;justify-content:space-between;margin-top:clamp(52px,6vw,84px);padding-top:20px;border-top:1px solid rgba(246,244,238,.15)">
-<span style="display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600;letter-spacing:-.025em;color:#F6F4EE"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>Sift</span>
+<span style="display:flex;align-items:center;gap:9px;font-size:16px;font-weight:600;letter-spacing:-.025em;color:#F6F4EE"><span style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>sort</span>
 <div style="display:flex;flex-wrap:wrap;gap:22px">
 <a href="#how" class="foot-link" style="font-size:14px;color:rgba(246,244,238,.6)">How it works</a>
 <a href="#top" class="foot-link" style="font-size:14px;color:rgba(246,244,238,.6)">View the project</a>
@@ -336,27 +336,32 @@ summary::-webkit-details-marker{display:none}
 
   // ---- scripted demo data (no network, no model calls) ----------------------
   var SCENARIOS = [
-    { key: 'deadlines', label: 'Find my deadlines', steps: [
+    { key: 'syllabus', label: 'Sort this syllabus', steps: [
       { at: 500,  kind: 'file', side: 'user', name: 'CSCI-UA 201 Syllabus.pdf', meta: 'PDF · 8 pages' },
-      { at: 1150, kind: 'msg',  side: 'user', text: 'Find the important deadlines in this syllabus.' },
-      { at: 2000, kind: 'typing', side: 'sift' },
-      { at: 4100, kind: 'msg',  side: 'sift', text: 'Got it — Project 1 is due Mon, Aug 17; Quiz 2 Fri, Aug 21; Midterm Thu, Sep 10; and Project 2 Mon, Sep 28.' }
+      { at: 1150, kind: 'msg',  side: 'user', text: 'sort this' },
+      { at: 2000, kind: 'typing', side: 'sort' },
+      { at: 4100, kind: 'msg',  side: 'sort', text: 'Sorted into deadlines for CSCI-UA 201 — Project 1 due Mon, Aug 17; Quiz 2 Fri, Aug 21; Midterm Thu, Sep 10; Project 2 Mon, Sep 28. From the course schedule on page 6.' }
     ]},
-    { key: 'cafe', label: 'Remember this café', steps: [
+    { key: 'place', label: 'Save this place', steps: [
       { at: 450,  kind: 'preview', side: 'user', title: 'Radio Bakery', sub: 'radiobakery · Greenpoint, Brooklyn', tag: 'instagram.com' },
-      { at: 1150, kind: 'msg', side: 'user', text: 'Save this for when I’m in Brooklyn.' },
-      { at: 1950, kind: 'typing', side: 'sift' },
-      { at: 3600, kind: 'msg', side: 'sift', text: 'Saved Radio Bakery in Greenpoint. You wanted to try the scallion-sesame croissant.' },
-      { at: 4700, kind: 'divider', text: 'Three weeks later' },
-      { at: 5400, kind: 'msg', side: 'user', text: 'What was that café in Brooklyn?' },
-      { at: 6200, kind: 'typing', side: 'sift' },
-      { at: 8000, kind: 'msg', side: 'sift', text: 'Radio Bakery, 135 Greenpoint Ave. You saved it on July 12 — the scallion-sesame croissant.' }
+      { at: 1150, kind: 'msg', side: 'user', text: 'save this for when I’m in Brooklyn' },
+      { at: 1950, kind: 'typing', side: 'sort' },
+      { at: 3600, kind: 'msg', side: 'sort', text: 'Sorted into places — Radio Bakery, 135 Greenpoint Ave. Kept the note about the scallion-sesame croissant.' }
     ]},
-    { key: 'apply', label: 'Remind me to apply', steps: [
+    { key: 'opportunity', label: 'Remember this opportunity', steps: [
       { at: 450,  kind: 'job', side: 'user', title: 'Product Design Intern', sub: 'Northline Labs · New York, NY', meta: 'Applications close Aug 24' },
-      { at: 1200, kind: 'msg', side: 'user', text: 'I want to apply here. Remind me in a week to finish it and the other job application.' },
-      { at: 2300, kind: 'typing', side: 'sift' },
-      { at: 4200, kind: 'msg', side: 'sift', text: 'Done — I’ll remind you next Wednesday at 10:00 AM to finish the Northline Labs and Ramp applications.' }
+      { at: 1200, kind: 'msg', side: 'user', text: 'don’t let me forget this one' },
+      { at: 2300, kind: 'typing', side: 'sort' },
+      { at: 4200, kind: 'msg', side: 'sort', text: 'Sorted into opportunities — Product Design Intern at Northline Labs, applications close Aug 24. I’ll remind you Wed, Aug 20 at 10:00 AM, four days out.' }
+    ]},
+    { key: 'later', label: 'Ask it later', steps: [
+      { at: 400,  kind: 'divider', text: 'Three weeks later' },
+      { at: 1000, kind: 'msg', side: 'user', text: 'what do I actually have to do this week' },
+      { at: 1900, kind: 'typing', side: 'sort' },
+      { at: 4000, kind: 'msg', side: 'sort', text: 'Three things. The Northline Labs application closes Sun, Aug 24. Quiz 2 is Fri, Aug 21 — from your CSCI-UA 201 syllabus. Midterm Thu, Sep 10 is further out.' },
+      { at: 5100, kind: 'msg', side: 'user', text: 'where should I study thursday' },
+      { at: 5900, kind: 'typing', side: 'sort' },
+      { at: 7700, kind: 'msg', side: 'sort', text: 'Radio Bakery in Greenpoint — you saved it on July 12 for the quiet upstairs tables. Thursday is your open day before Quiz 2.' }
     ]}
   ];
 
@@ -398,9 +403,9 @@ summary::-webkit-details-marker{display:none}
 
       case 'typing':
         return '<span style="background:#E5E1D7;border-radius:18px;padding:14px 16px;display:flex;gap:5px;align-items:center">'
-          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sift-dot 1.15s ease-in-out infinite"></span>'
-          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sift-dot 1.15s ease-in-out .16s infinite"></span>'
-          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sift-dot 1.15s ease-in-out .32s infinite"></span>'
+          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sort-dot 1.15s ease-in-out infinite"></span>'
+          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sort-dot 1.15s ease-in-out .16s infinite"></span>'
+          + '<span style="width:7px;height:7px;border-radius:50%;background:#191815;animation:sort-dot 1.15s ease-in-out .32s infinite"></span>'
           + '</span>';
 
       case 'file':
@@ -463,7 +468,7 @@ summary::-webkit-details-marker{display:none}
     var align = user ? 'flex-end' : 'flex-start';
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;justify-content:' + justify;
-    if (animate) row.style.animation = 'sift-rise 220ms cubic-bezier(.23,1,.32,1) both';
+    if (animate) row.style.animation = 'sort-rise 220ms cubic-bezier(.23,1,.32,1) both';
     row.innerHTML = '<div style="max-width:88%;display:flex;flex-direction:column;align-items:' + align + ';gap:7px">'
       + body(s) + '</div>';
     innerEl.appendChild(row);

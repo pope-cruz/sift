@@ -15,8 +15,8 @@ import { sendRecovery } from "./recovery.ts";
 import { processTurn } from "./turn-core.ts";
 
 const WELCOME =
-  "Hey! I'm Sift. Send me anything you want to remember — a syllabus, a screenshot, a stray thought — " +
-  "and I'll keep track of it and remind you when it matters. Ask me what's coming up any time.";
+  "Hey! I'm sort. Send me anything — a syllabus, a screenshot, a link, a stray thought — and I'll " +
+  "work out what it is and keep it where it belongs. Ask me for it later, any way you remember it.";
 
 /**
  * Send and persist. This line does not echo outbound messages back into the
@@ -47,7 +47,9 @@ export async function say(space: Space, studentId: string | null, text: string) 
   }
 }
 
-const isStart = (text: string) => /^\s*start sift\s*$/i.test(text);
+// The product is "sort"; "start sift" is still accepted because the old phrase
+// was printed on handouts, and rejecting it would strand anyone using them.
+const isStart = (text: string) => /^\s*start (sort|sift)\s*$/i.test(text);
 
 export async function handleTurnBatch(
   space: Space,
@@ -69,7 +71,7 @@ export async function handleTurnBatch(
     if (!current) {
       const startIndex = messages.findIndex((message) => isStart(textOf(parts(message))));
       if (startIndex < 0) {
-        await say(space, null, "Text me “Start Sift” to get going.");
+        await say(space, null, "Text me “Start sort” to get going.");
         return true;
       }
 
@@ -106,7 +108,7 @@ export async function handleTurnBatch(
       error: safeDiagnostic(error),
     });
     // Through say(), so the failure is in the transcript. Sent bare, the next
-    // turn's context has a gap where the apology was, and Sift answers "what
+    // turn's context has a gap where the apology was, and sort answers "what
     // happened?" as though the turn never occurred.
     await sendRecovery((text) => say(space, current?.id ?? null, text));
     return false;
