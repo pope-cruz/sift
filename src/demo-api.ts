@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { handle } from "hono/vercel";
+import { handle } from "@hono/node-server/vercel";
 
 import {
   assertDemoEnabled,
