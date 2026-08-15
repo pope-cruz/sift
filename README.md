@@ -1,6 +1,18 @@
-# sift
+# sort
 
-A [Spectrum](https://photon.codes/docs/spectrum-ts) project. Wired with: imessage.
+**sort is the inbox for everything happening in your life.** Send it anything — a syllabus PDF, a
+screenshot, a link, a job listing, a half-formed thought — and sort figures out what it is, what
+matters, and where it belongs.
+
+A syllabus becomes deadlines and course context. A job listing becomes an opportunity and a
+reminder. A café link becomes a saved place. A casual message becomes a task, event, or fact worth
+remembering. The chat interface is just the fastest way to send something to sort; the product is
+the sorting layer underneath.
+
+The loop: **send anything → understand what it contains → sort it into the right kind of context →
+connect it with what was sorted before → bring it back or act on it when it matters.**
+
+Built as a [Spectrum](https://photon.codes/docs/spectrum-ts) project. Wired with: imessage.
 
 ## Environment
 
@@ -38,8 +50,8 @@ token secrets; it still needs the shared server values documented in `.env.examp
 
 The public landing page lives in [`web/`](./web) as a static file (`web/index.html`). Its preview
 is scripted and makes no model calls; the dedicated `/demo/` route is the real interactive demo.
-It is ported from the Claude Design source (`Sift Landing.dc.html`); the design file's
-`support.js` runtime is a design-tool dependency and is deliberately not shipped.
+The design was originally ported from a Claude Design source file; that file's `support.js`
+runtime is a design-tool dependency and is deliberately not shipped.
 
 Use `npm run demo:dev` to preview both surfaces with the correct local API routing.
 

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { routeActiveTurn, siftingNotice, type RoutingChannel } from "./turn-routing.ts";
+import { routeActiveTurn, sortingNotice, type RoutingChannel } from "./turn-routing.ts";
 
 function fakeChannel(events: string[]): RoutingChannel {
   return {
@@ -36,7 +36,7 @@ for (const transport of ["Spectrum", "web"] as const) {
       delay: neverDelay,
     });
 
-    // The old routing opened every attachment turn with "Sifting...". A turn
+    // The old routing opened every attachment turn with "Sorting...". A turn
     // that resolves quickly should cost the student exactly one bubble.
     assert.deepEqual(events, ["typing:start", "send:Saved one deadline.", "typing:stop"]);
   });
@@ -70,14 +70,14 @@ test("slow ingest announces the wait, then still delivers the reply", async () =
 
   timer.resolve();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(events, ["typing:start", "send:Give me a minute to sift through this.:transient"]);
+  assert.deepEqual(events, ["typing:start", "send:Give me a minute to sort through this.:transient"]);
 
   ingest.resolve("Saved one deadline.");
   await routed;
 
   assert.deepEqual(events, [
     "typing:start",
-    "send:Give me a minute to sift through this.:transient",
+    "send:Give me a minute to sort through this.:transient",
     "send:Saved one deadline.",
     "typing:stop",
   ]);
@@ -145,7 +145,7 @@ test("a slow failure still reaches the caller's recovery path", async () => {
   await assert.rejects(routed, /reader timed out/);
   assert.deepEqual(events, [
     "typing:start",
-    "send:Give me a minute to sift through this.:transient",
+    "send:Give me a minute to sort through this.:transient",
     "typing:stop",
   ]);
 });
@@ -164,23 +164,23 @@ test("an empty turn with no attachments is still refused", async () => {
 });
 
 test("the notice counts the files instead of describing one of them", () => {
-  assert.equal(siftingNotice([IMAGE, PDF, IMAGE]), "Give me a minute — I'm still reading through all 3.");
+  assert.equal(sortingNotice([IMAGE, PDF, IMAGE]), "Give me a minute — I'm still reading through all 3.");
 });
 
 test("a dense PDF earns a stronger notice than a screenshot", () => {
   assert.equal(
-    siftingNotice([{ mimeType: "application/pdf", size: 9 * 1024 * 1024 }]),
-    "Give me a minute — there's a lot in this one. Still sifting through it.",
+    sortingNotice([{ mimeType: "application/pdf", size: 9 * 1024 * 1024 }]),
+    "Give me a minute — there's a lot in this one. Still sorting through it.",
   );
-  assert.equal(siftingNotice([PDF]), "Give me a minute to sift through this.");
-  assert.equal(siftingNotice([IMAGE]), "Give me a minute to sift through this.");
+  assert.equal(sortingNotice([PDF]), "Give me a minute to sort through this.");
+  assert.equal(sortingNotice([IMAGE]), "Give me a minute to sort through this.");
 });
 
 test("a missing size never claims a document is dense", () => {
   // `size` is optional on the provider's attachment. Absent evidence of length
   // must not become a claim about it.
   assert.equal(
-    siftingNotice([{ mimeType: "application/pdf" }]),
-    "Give me a minute to sift through this.",
+    sortingNotice([{ mimeType: "application/pdf" }]),
+    "Give me a minute to sort through this.",
   );
 });

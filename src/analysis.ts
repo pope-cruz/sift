@@ -176,7 +176,7 @@ export type AggregateResult = {
     title: string | null;
     summary: string;
     category: string | null;
-    /** Full provenance, so Sift can later say where a deadline came from. */
+    /** Full provenance, so sort can later say where a deadline came from. */
     extractedText: string;
   };
   actions: {
@@ -193,7 +193,7 @@ export type AggregateResult = {
  * What the student is told this date is. The label, never the evidence excerpt —
  * the excerpt is provenance and reads as a fragment of someone else's document
  * ("Due September 18, 2026 at 11:59pm on Gradescope.") in the middle of a
- * sentence Sift is speaking.
+ * sentence sort is speaking.
  */
 function describe(candidate: DateCandidate): string {
   const label = candidate.label.trim().replace(/[.\s]+$/, "");
@@ -303,7 +303,7 @@ function reconcileDateConflicts(decisions: Decision[]): Decision[] {
 }
 
 /**
- * Fold one analysis into exactly what gets written and exactly what Sift says.
+ * Fold one analysis into exactly what gets written and exactly what sort says.
  *
  * The confirmation is built from the persisted rows rather than from the
  * analysis, so it is structurally incapable of claiming a deadline that no

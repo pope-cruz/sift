@@ -1,4 +1,4 @@
--- Sift schema (Phase 1). Run in the Supabase SQL editor, or:
+-- sort schema (Phase 1). Run in the Supabase SQL editor, or:
 --   psql "$SUPABASE_DB_URL" -f supabase/schema.sql
 -- Safe to re-run.
 

@@ -15,9 +15,9 @@ const CANT_READ =
   "I can't read that one yet — send me a PDF, a screenshot, or just type it and I'll keep track of it.";
 
 /**
- * How long ingest gets before Sift says anything about waiting.
+ * How long ingest gets before sort says anything about waiting.
  *
- * This used to be unconditional: every attachment turn opened with "Sifting..."
+ * This used to be unconditional: every attachment turn opened with "Sorting..."
  * whether the work took two seconds or forty, and the send was awaited *before*
  * the file was even read — so the announcement was on the critical path of the
  * thing it was announcing. Racing it instead means the fast path loses the
@@ -36,17 +36,17 @@ const LONG_DOCUMENT_BYTES = 2 * 1024 * 1024;
  * here promises what was found; that sentence is built from persisted rows in
  * analysis.ts and cannot be anticipated.
  */
-export function siftingNotice(attachments: readonly AttachmentSummary[]): string {
+export function sortingNotice(attachments: readonly AttachmentSummary[]): string {
   if (attachments.length > 1) {
     return `Give me a minute — I'm still reading through all ${attachments.length}.`;
   }
 
   const only = attachments[0];
   if (only?.mimeType === "application/pdf" && (only.size ?? 0) > LONG_DOCUMENT_BYTES) {
-    return "Give me a minute — there's a lot in this one. Still sifting through it.";
+    return "Give me a minute — there's a lot in this one. Still sorting through it.";
   }
 
-  return "Give me a minute to sift through this.";
+  return "Give me a minute to sort through this.";
 }
 
 /**
@@ -94,7 +94,7 @@ export async function routeActiveTurn(input: {
       const reply = await announcingSlowWork(
         input.ingest(),
         input.noticeAfterMs ?? NOTICE_AFTER_MS,
-        () => input.channel.send(siftingNotice(input.attachments), { transient: true }),
+        () => input.channel.send(sortingNotice(input.attachments), { transient: true }),
         input.delay ?? unrefDelay,
       );
       await input.channel.send(reply);

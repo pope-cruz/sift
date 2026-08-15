@@ -23,7 +23,7 @@ const { data: student, error } = await db
   .insert({
     name: "Demo Student",
     phone: env.DEMO_PHONE,
-    photon_space_id: null, // Set by onboarding when they text "Start Sift".
+    photon_space_id: null, // Set by onboarding when they text "Start sort".
     timezone: "America/New_York",
     profile: {},
   })
@@ -32,4 +32,4 @@ const { data: student, error } = await db
 
 if (error) throw error;
 
-console.log({ seeded: student, note: 'text "Start Sift" from this number to bind the space' });
+console.log({ seeded: student, note: 'text "Start sort" from this number to bind the space' });

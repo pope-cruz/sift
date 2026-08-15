@@ -2,7 +2,7 @@
 
 ## Architecture
 
-Sift now separates observation from selection:
+sort now separates observation from selection:
 
 1. The reader returns one or more isolated `item_key` records for an attachment.
 2. Scalar metadata and dates are candidate sets carrying source, excerpt, explicitness, confidence, and rationale.
@@ -15,7 +15,7 @@ The Spectrum boundary, reader schema, deterministic reconciler, persistence payl
 ## Remaining limitations
 
 - The automated boundary test uses a realistic Spectrum group message and production reconciliation to produce persistence payloads, but it does not call Anthropic or mutate Supabase. The real Spectrum worker was booted successfully; no live message was sent during this run.
-- URL slugs and visible-page evidence are modeled and reconciled, but Sift still has no URL fetcher. A standalone rich link remains unsupported by the current turn router.
+- URL slugs and visible-page evidence are modeled and reconciled, but sort still has no URL fetcher. A standalone rich link remains unsupported by the current turn router.
 - Multi-item segmentation inside one PDF/image depends on the structured reader model. There is no deterministic OCR/layout splitter to independently verify item boundaries.
 - Author, publication date, and source provenance live in `items.extracted_text`; the current SQL schema has no dedicated searchable columns for those fields.
 - A caption shared across multiple attachments is conservatively prevented from creating per-item actions. Users must send files separately or clarify the target in a later text turn.

@@ -160,7 +160,7 @@ try {
 
     const started = Date.now();
     try {
-      await say(space, student.id, "Sifting...");
+      await say(space, student.id, "Sorting...");
       await space.responding(async () => {
         const reply = await ingest({
           student,
@@ -183,7 +183,7 @@ try {
       await say(
         space,
         student.id,
-        "Hmm, I had trouble sifting that controlled test file — please wait for the validation result.",
+        "Hmm, I had trouble sorting that controlled test file — please wait for the validation result.",
       ).catch(() => {});
     }
   }

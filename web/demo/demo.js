@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'sift.demo.session.v1';
+const TOKEN_KEY = 'sort.demo.session.v1';
 const state = { token: localStorage.getItem(TOKEN_KEY) || '', phase: 'initializing', busy: false, online: navigator.onLine, turnsRemaining: 12, file: null, lastPayload: null, expiresAt: null, typing: null };
 const $ = (selector) => document.querySelector(selector);
 const transcript = $('#transcript');
@@ -59,7 +59,7 @@ function addError(message, retry = false) { removeTyping(); hideEmpty(); const r
 function applyPresentation(data) {
   if (!data || typeof data !== 'object') return;
   // Structured metadata stays available to the product, but only the
-  // fast-forward control is visible here. Sift's Messages replies are plain
+  // fast-forward control is visible here. sort's Messages replies are plain
   // text, so deadline/task/place cards would misrepresent the real channel.
   if (data.type === 'reminder_cleared') {
     demoControl.hidden = true;

@@ -411,7 +411,7 @@ export async function insertActions(
 }
 
 /**
- * Rewrite reference rows once the student has told Sift what the dates really
+ * Rewrite reference rows once the student has told sort what the dates really
  * are. Each row gets its own values, so this is a loop rather than one
  * statement — a syllabus is a handful of rows, not a bulk job.
  */
@@ -440,7 +440,7 @@ export async function rescheduleActions(
  * Push the raw bytes into the private bucket. Split from the row insert because
  * this is the slow half — a megabyte over the wire — and it depends on nothing
  * the extraction produces, so ingest runs the two concurrently rather than
- * making the student wait for the upload before Sift can reply.
+ * making the student wait for the upload before sort can reply.
  *
  * Keyed by student, so one student's upload can never collide with another's.
  */

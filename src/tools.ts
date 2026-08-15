@@ -1,4 +1,4 @@
-// The tools Sift can call on a text turn.
+// The tools sort can call on a text turn.
 //
 // This replaces the intent classifier. Sorting every message into one of six
 // boxes before anything could happen meant a misread message got the wrong
@@ -41,7 +41,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "set_tracking",
     description:
-      "Choose whether an item's dates are live deadlines Sift reminds about, or kept " +
+      "Choose whether an item's dates are live deadlines sort reminds about, or kept " +
       "for reference only. Use `tracked: false` when the student says it's an old file " +
       "they just want remembered — \"keep it as reference\", \"just for ref\", \"that's " +
       "last term's\", \"don't remind me about it\". This is the tool that answers your own " +
@@ -122,7 +122,7 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "undo_last_save",
     description:
-      "Remove only the most recent thing the student asked Sift to save. Use only for an " +
+      "Remove only the most recent thing the student asked sort to save. Use only for an " +
       'explicit immediate retraction such as "actually don\'t save that", "remove what I just sent", ' +
       'or "delete the PDF I just sent". This never deletes profile/personal context or conversation ' +
       "history, and it cannot target an older item by name. Do not use it for 'don't remind me' " +
