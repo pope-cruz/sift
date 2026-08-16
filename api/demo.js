@@ -616,6 +616,15 @@ async function rescheduleActionReminder(input) {
   return (data?.length ?? 0) === 1;
 }
 
+// src/defer.ts
+import { waitUntil } from "@vercel/functions";
+function defer(work, label) {
+  const promise = work().catch((error) => {
+    console.error(label, safeDiagnostic(error));
+  });
+  waitUntil(promise);
+}
+
 // src/demo-policy.ts
 import { createHash, createHmac, randomBytes } from "node:crypto";
 var DEMO_LIMITS = {
@@ -705,9 +714,7 @@ async function resumeOrCreateDemoSession(input) {
       return { token: input.token, expiresAt: existing.expires_at, quota: quota(existing), transcript: await transcript(existing.id) };
     }
   }
-  await cleanupExpiredDemoSessions(10).catch((error) => {
-    console.error("opportunistic demo cleanup failed", safeDiagnostic(error));
-  });
+  defer(() => cleanupExpiredDemoSessions(10), "opportunistic demo cleanup failed");
   const token = newDemoToken();
   const result = await db.rpc("create_demo_session", {
     p_token_hash: hashDemoToken(token),

@@ -30,6 +30,7 @@
     "@anthropic-ai/sdk": "^0.116.0",
     "@hono/node-server": "^1.19.5",
     "@supabase/supabase-js": "^2.112.2",
+    "@vercel/functions": "^3.9.3",
     "dotenv": "^17.4.2",
     "hono": "^4.9.8",
     "node-cron": "^4.6.0",

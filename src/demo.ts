@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { cleanupJobFailures, db, getStudentById, type Student } from "./db.ts";
+import { defer } from "./defer.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
 import { getDemoEnv } from "./env.ts";
 import {
@@ -96,10 +97,10 @@ export async function resumeOrCreateDemoSession(input: {
   }
 
   // Keep physical cleanup moving between the daily cron runs without making
-  // session creation depend on cleanup infrastructure being healthy.
-  await cleanupExpiredDemoSessions(10).catch((error) => {
-    console.error("opportunistic demo cleanup failed", safeDiagnostic(error));
-  });
+  // session creation depend on cleanup infrastructure being healthy. Deferred
+  // rather than awaited: it costs several round trips and scales with the
+  // expired backlog, which the visitor opening the demo should not wait for.
+  defer(() => cleanupExpiredDemoSessions(10), "opportunistic demo cleanup failed");
 
   const token = newDemoToken();
   const result = await db.rpc("create_demo_session", {
