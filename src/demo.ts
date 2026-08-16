@@ -107,10 +107,11 @@ export async function resumeOrCreateDemoSession(input: {
     p_token_hash: hashDemoToken(token),
     p_client_key_hash: hashClientKey(input.clientKey),
     p_timezone: validTimezone(input.timezone),
+    p_max_sessions: DEMO_LIMITS.sessionsPerClient,
   });
   if (result.error) {
     if (result.error.message.includes("DEMO_SESSION_CAP")) {
-      throw new DemoError("SESSION_CREATION_CAP", "This browser has created three demos in the last 24 hours.", 429);
+      throw new DemoError("SESSION_CREATION_CAP", `This browser has created ${DEMO_LIMITS.sessionsPerClient} demos in the last 24 hours.`, 429);
     }
     throw result.error;
   }
