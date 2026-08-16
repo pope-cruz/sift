@@ -1,4 +1,6 @@
-import sharp from "sharp";
+import { createRequire } from "node:module";
+
+import { Resvg } from "@resvg/resvg-js";
 
 import { today } from "./dates.ts";
 import type { Presentation, TurnAttachment } from "./turn-core.ts";
@@ -28,19 +30,34 @@ function escapeXml(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
 
+// These fixtures are the demo's whole first impression: the model reads the
+// rendered text back out of the image. Fonts are resolved from explicit files
+// with system lookup disabled, because serverless runtimes ship no fonts at
+// all — there, system resolution silently renders nothing and the model sees a
+// blank card.
+const require = createRequire(import.meta.url);
+const fontFiles = [
+  require.resolve("dejavu-fonts-ttf/ttf/DejaVuSans.ttf"),
+  require.resolve("dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf"),
+];
+const fontFamily = "DejaVu Sans";
+
 async function renderFixture(title: string, eyebrow: string, lines: string[]): Promise<Buffer> {
   const rows = lines.map((line, index) =>
-    `<text x="128" y="${300 + index * 90}" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#55534d">${escapeXml(line)}</text>`,
+    `<text x="128" y="${300 + index * 90}" font-family="${fontFamily}" font-size="34" fill="#55534d">${escapeXml(line)}</text>`,
   ).join("");
-  const svg = Buffer.from(`<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
+  const svg = `<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
     <rect width="1280" height="900" fill="#fcfbf7"/>
     <rect x="64" y="64" width="1152" height="772" rx="28" fill="#f6f4ee" stroke="#dcd8ce" stroke-width="2"/>
     <circle cx="112" cy="118" r="10" fill="#c94f32"/>
-    <text x="140" y="130" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
-    <text x="112" y="230" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
+    <text x="140" y="130" font-family="${fontFamily}" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
+    <text x="112" y="230" font-family="${fontFamily}" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
     ${rows}
-  </svg>`);
-  return sharp(svg).png().toBuffer();
+  </svg>`;
+  const rendered = new Resvg(svg, {
+    font: { fontFiles, loadSystemFonts: false, defaultFontFamily: fontFamily },
+  }).render();
+  return Buffer.from(rendered.asPng());
 }
 
 export function isDemoScenarioId(value: unknown): value is DemoScenarioId {

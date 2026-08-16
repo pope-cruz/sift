@@ -954,7 +954,8 @@ async function cleanupExpiredDemoSessions(limit = 500) {
 }
 
 // src/demo-fixtures.ts
-import sharp from "sharp";
+import { createRequire } from "node:module";
+import { Resvg } from "@resvg/resvg-js";
 function addDays(date, days) {
   const value = /* @__PURE__ */ new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -966,19 +967,28 @@ function longDate(date) {
 function escapeXml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
+var require2 = createRequire(import.meta.url);
+var fontFiles = [
+  require2.resolve("dejavu-fonts-ttf/ttf/DejaVuSans.ttf"),
+  require2.resolve("dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf")
+];
+var fontFamily = "DejaVu Sans";
 async function renderFixture(title, eyebrow, lines) {
   const rows = lines.map(
-    (line, index) => `<text x="128" y="${300 + index * 90}" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#55534d">${escapeXml(line)}</text>`
+    (line, index) => `<text x="128" y="${300 + index * 90}" font-family="${fontFamily}" font-size="34" fill="#55534d">${escapeXml(line)}</text>`
   ).join("");
-  const svg = Buffer.from(`<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
+  const svg = `<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
     <rect width="1280" height="900" fill="#fcfbf7"/>
     <rect x="64" y="64" width="1152" height="772" rx="28" fill="#f6f4ee" stroke="#dcd8ce" stroke-width="2"/>
     <circle cx="112" cy="118" r="10" fill="#c94f32"/>
-    <text x="140" y="130" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
-    <text x="112" y="230" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
+    <text x="140" y="130" font-family="${fontFamily}" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
+    <text x="112" y="230" font-family="${fontFamily}" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
     ${rows}
-  </svg>`);
-  return sharp(svg).png().toBuffer();
+  </svg>`;
+  const rendered = new Resvg(svg, {
+    font: { fontFiles, loadSystemFonts: false, defaultFontFamily: fontFamily }
+  }).render();
+  return Buffer.from(rendered.asPng());
 }
 function isDemoScenarioId(value) {
   return value === "deadlines" || value === "cafe" || value === "application";
@@ -1055,7 +1065,7 @@ async function runWebDemoReminder(studentId) {
 }
 
 // src/input.ts
-import sharp2 from "sharp";
+import sharp from "sharp";
 var PDF_HEADER = Buffer.from("%PDF-");
 var PDF_EOF = Buffer.from("%%EOF");
 var VISION_MIME = /* @__PURE__ */ new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
@@ -1093,7 +1103,7 @@ async function validateReadableBytes(bytes, mimeType, displayName = "That file")
   }
   if (mimeType.startsWith("image/")) {
     try {
-      const metadata = await sharp2(bytes, { failOn: "error" }).metadata();
+      const metadata = await sharp(bytes, { failOn: "error" }).metadata();
       if (!metadata.width || !metadata.height) throw new Error("image dimensions were missing");
     } catch {
       throw new InputDiagnosticError(
@@ -1118,7 +1128,7 @@ function uniqueAttachments(files) {
 }
 
 // src/ingest.ts
-import sharp3 from "sharp";
+import sharp2 from "sharp";
 
 // src/metadata.ts
 var SOURCE_STRENGTH = {
@@ -2146,7 +2156,7 @@ var MAX_BYTES = 20 * 1024 * 1024;
 var tooBig = (name) => `${name} is too big for me to read \u2014 anything under 20MB works. If it's a long PDF, the pages with the dates on them are enough.`;
 async function forVision(bytes, mimeType) {
   try {
-    const resized = await sharp3(bytes).resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    const resized = await sharp2(bytes).resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
     return { bytes: resized, mimeType: "image/jpeg" };
   } catch {
     return { bytes, mimeType };
