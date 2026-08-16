@@ -29,7 +29,21 @@ function safeDiagnostic(error) {
     const code = "code" in error && typeof error.code === "string" ? error.code : "UNEXPECTED_ERROR";
     return { name: error.name || "Error", code, message: redact(error.message) };
   }
+  if (error !== null && typeof error === "object") {
+    const record = error;
+    const parts = ["message", "details", "hint"].map((key2) => record[key2]).filter((value) => typeof value === "string" && value.length > 0);
+    const code = typeof record.code === "string" ? record.code : "UNEXPECTED_ERROR";
+    if (parts.length) return { name: "UnknownError", code, message: redact(parts.join(" | ")) };
+    return { name: "UnknownError", code, message: redact(safeStringify(error)) };
+  }
   return { name: "UnknownError", code: "UNEXPECTED_ERROR", message: redact(String(error)) };
+}
+function safeStringify(value) {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 var InputDiagnosticError = class extends Error {
   name = "InputDiagnosticError";

@@ -24,7 +24,28 @@ export function safeDiagnostic(error: unknown): SafeDiagnostic {
       "code" in error && typeof error.code === "string" ? error.code : "UNEXPECTED_ERROR";
     return { name: error.name || "Error", code, message: redact(error.message) };
   }
+  // PostgREST and other clients reject with plain objects rather than Errors.
+  // String() turns those into "[object Object]", which hides the one useful
+  // fact — a failed RPC once reported nothing but that, while the database was
+  // naming the exact missing function signature.
+  if (error !== null && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const parts = ["message", "details", "hint"]
+      .map((key) => record[key])
+      .filter((value): value is string => typeof value === "string" && value.length > 0);
+    const code = typeof record.code === "string" ? record.code : "UNEXPECTED_ERROR";
+    if (parts.length) return { name: "UnknownError", code, message: redact(parts.join(" | ")) };
+    return { name: "UnknownError", code, message: redact(safeStringify(error)) };
+  }
   return { name: "UnknownError", code: "UNEXPECTED_ERROR", message: redact(String(error)) };
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
 }
 
 export class InputDiagnosticError extends Error {
