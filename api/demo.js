@@ -4,7 +4,7 @@
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { handle } from "@hono/node-server/vercel";
+import { handle } from "hono/vercel";
 
 // src/demo.ts
 import { randomUUID } from "node:crypto";
@@ -616,6 +616,15 @@ async function rescheduleActionReminder(input) {
   return (data?.length ?? 0) === 1;
 }
 
+// src/defer.ts
+import { waitUntil } from "@vercel/functions";
+function defer(work, label) {
+  const promise = work().catch((error) => {
+    console.error(label, safeDiagnostic(error));
+  });
+  waitUntil(promise);
+}
+
 // src/demo-policy.ts
 import { createHash, createHmac, randomBytes } from "node:crypto";
 var DEMO_LIMITS = {
@@ -624,7 +633,10 @@ var DEMO_LIMITS = {
   fileBytes: 8 * 1024 * 1024,
   totalBytes: 20 * 1024 * 1024,
   textCharacters: 2e3,
-  sessionsPerClient: 3
+  // Passed to create_demo_session as p_max_sessions, so this is the only place
+  // the per-browser cap is defined. The SQL default only applies to callers
+  // that omit the argument.
+  sessionsPerClient: 25
 };
 var DEMO_ALLOWED_MIME = /* @__PURE__ */ new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 var DemoError = class extends Error {
@@ -705,18 +717,17 @@ async function resumeOrCreateDemoSession(input) {
       return { token: input.token, expiresAt: existing.expires_at, quota: quota(existing), transcript: await transcript(existing.id) };
     }
   }
-  await cleanupExpiredDemoSessions(10).catch((error) => {
-    console.error("opportunistic demo cleanup failed", safeDiagnostic(error));
-  });
+  defer(() => cleanupExpiredDemoSessions(10), "opportunistic demo cleanup failed");
   const token = newDemoToken();
   const result = await db.rpc("create_demo_session", {
     p_token_hash: hashDemoToken(token),
     p_client_key_hash: hashClientKey(input.clientKey),
-    p_timezone: validTimezone(input.timezone)
+    p_timezone: validTimezone(input.timezone),
+    p_max_sessions: DEMO_LIMITS.sessionsPerClient
   });
   if (result.error) {
     if (result.error.message.includes("DEMO_SESSION_CAP")) {
-      throw new DemoError("SESSION_CREATION_CAP", "This browser has created three demos in the last 24 hours.", 429);
+      throw new DemoError("SESSION_CREATION_CAP", `This browser has created ${DEMO_LIMITS.sessionsPerClient} demos in the last 24 hours.`, 429);
     }
     throw result.error;
   }
@@ -947,7 +958,8 @@ async function cleanupExpiredDemoSessions(limit = 500) {
 }
 
 // src/demo-fixtures.ts
-import sharp from "sharp";
+import { createRequire } from "node:module";
+import { Resvg } from "@resvg/resvg-js";
 function addDays(date, days) {
   const value = /* @__PURE__ */ new Date(`${date}T12:00:00Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -959,19 +971,28 @@ function longDate(date) {
 function escapeXml(value) {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
+var require2 = createRequire(import.meta.url);
+var fontFiles = [
+  require2.resolve("dejavu-fonts-ttf/ttf/DejaVuSans.ttf"),
+  require2.resolve("dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf")
+];
+var fontFamily = "DejaVu Sans";
 async function renderFixture(title, eyebrow, lines) {
   const rows = lines.map(
-    (line, index) => `<text x="128" y="${300 + index * 90}" font-family="Arial, Helvetica, sans-serif" font-size="34" fill="#55534d">${escapeXml(line)}</text>`
+    (line, index) => `<text x="128" y="${300 + index * 90}" font-family="${fontFamily}" font-size="34" fill="#55534d">${escapeXml(line)}</text>`
   ).join("");
-  const svg = Buffer.from(`<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
+  const svg = `<svg width="1280" height="900" xmlns="http://www.w3.org/2000/svg">
     <rect width="1280" height="900" fill="#fcfbf7"/>
     <rect x="64" y="64" width="1152" height="772" rx="28" fill="#f6f4ee" stroke="#dcd8ce" stroke-width="2"/>
     <circle cx="112" cy="118" r="10" fill="#c94f32"/>
-    <text x="140" y="130" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
-    <text x="112" y="230" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
+    <text x="140" y="130" font-family="${fontFamily}" font-size="24" font-weight="700" letter-spacing="2" fill="#817e76">${escapeXml(eyebrow.toUpperCase())}</text>
+    <text x="112" y="230" font-family="${fontFamily}" font-size="52" font-weight="700" fill="#1c1c19">${escapeXml(title)}</text>
     ${rows}
-  </svg>`);
-  return sharp(svg).png().toBuffer();
+  </svg>`;
+  const rendered = new Resvg(svg, {
+    font: { fontFiles, loadSystemFonts: false, defaultFontFamily: fontFamily }
+  }).render();
+  return Buffer.from(rendered.asPng());
 }
 function isDemoScenarioId(value) {
   return value === "deadlines" || value === "cafe" || value === "application";
@@ -1048,7 +1069,7 @@ async function runWebDemoReminder(studentId) {
 }
 
 // src/input.ts
-import sharp2 from "sharp";
+import sharp from "sharp";
 var PDF_HEADER = Buffer.from("%PDF-");
 var PDF_EOF = Buffer.from("%%EOF");
 var VISION_MIME = /* @__PURE__ */ new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
@@ -1086,7 +1107,7 @@ async function validateReadableBytes(bytes, mimeType, displayName = "That file")
   }
   if (mimeType.startsWith("image/")) {
     try {
-      const metadata = await sharp2(bytes, { failOn: "error" }).metadata();
+      const metadata = await sharp(bytes, { failOn: "error" }).metadata();
       if (!metadata.width || !metadata.height) throw new Error("image dimensions were missing");
     } catch {
       throw new InputDiagnosticError(
@@ -1111,7 +1132,7 @@ function uniqueAttachments(files) {
 }
 
 // src/ingest.ts
-import sharp3 from "sharp";
+import sharp2 from "sharp";
 
 // src/metadata.ts
 var SOURCE_STRENGTH = {
@@ -2139,7 +2160,7 @@ var MAX_BYTES = 20 * 1024 * 1024;
 var tooBig = (name) => `${name} is too big for me to read \u2014 anything under 20MB works. If it's a long PDF, the pages with the dates on them are enough.`;
 async function forVision(bytes, mimeType) {
   try {
-    const resized = await sharp3(bytes).resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+    const resized = await sharp2(bytes).resize({ width: 1568, height: 1568, fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
     return { bytes: resized, mimeType: "image/jpeg" };
   } catch {
     return { bytes, mimeType };
@@ -3540,14 +3561,19 @@ function reminderPresentationDelta(before, after) {
 var config = { runtime: "nodejs", maxDuration: 300 };
 var demoApp = new Hono();
 var app = demoApp;
-app.use("/api/demo", async (c, next) => {
-  await next();
-  c.header("Cache-Control", "no-store");
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header("Referrer-Policy", "same-origin");
-});
+var demoPaths = ["/api/demo", "/api/demo/*"];
+for (const path of demoPaths) {
+  app.use(path, async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "same-origin");
+  });
+}
 function route2(c) {
-  return c.req.query("route") ?? "";
+  const fromQuery = c.req.query("route");
+  if (fromQuery) return fromQuery;
+  return c.req.path.replace(/^\/api\/demo\/?/, "").replace(/\/+$/, "");
 }
 function bearer(value) {
   return value?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "";
@@ -3567,7 +3593,7 @@ function errorResponse(error) {
   console.error("demo api failed", safeDiagnostic(error));
   return { body: { error: { code: "PROCESSING_FAILED", message: "sort couldn't finish that request. Try it once more." } }, status: 500 };
 }
-app.post("/api/demo", async (c) => {
+app.on("POST", demoPaths, async (c) => {
   const endpoint = route2(c);
   try {
     assertDemoEnabled();
@@ -3756,7 +3782,7 @@ app.post("/api/demo", async (c) => {
     return c.json(normalized3.body, normalized3.status);
   }
 });
-app.get("/api/demo", async (c) => {
+app.on("GET", demoPaths, async (c) => {
   try {
     if (route2(c) !== "cleanup") throw new DemoError("NOT_FOUND", "Demo endpoint not found.", 404);
     if (bearer(c.req.header("authorization")) !== getDemoEnv().CRON_SECRET) throw new DemoError("UNAUTHORIZED", "Not authorized.", 401);
@@ -3766,7 +3792,7 @@ app.get("/api/demo", async (c) => {
     return c.json(normalized3.body, normalized3.status);
   }
 });
-app.delete("/api/demo", async (c) => {
+app.on("DELETE", demoPaths, async (c) => {
   try {
     assertDemoEnabled();
     if (route2(c) !== "session") throw new DemoError("NOT_FOUND", "Demo endpoint not found.", 404);
@@ -3778,9 +3804,11 @@ app.delete("/api/demo", async (c) => {
     return c.json(normalized3.body, normalized3.status);
   }
 });
-var demo_api_default = handle(app);
+var handler = handle(app);
 export {
+  handler as DELETE,
+  handler as GET,
+  handler as POST,
   config,
-  demo_api_default as default,
   demoApp
 };

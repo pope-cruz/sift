@@ -6,7 +6,10 @@ export const DEMO_LIMITS = {
   fileBytes: 8 * 1024 * 1024,
   totalBytes: 20 * 1024 * 1024,
   textCharacters: 2_000,
-  sessionsPerClient: 3,
+  // Passed to create_demo_session as p_max_sessions, so this is the only place
+  // the per-browser cap is defined. The SQL default only applies to callers
+  // that omit the argument.
+  sessionsPerClient: 25,
 } as const;
 
 export const DEMO_TOKEN_STORAGE_KEY = "sort.demo.session.v1";

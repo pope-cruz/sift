@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { cleanupJobFailures, db, getStudentById, type Student } from "./db.ts";
+import { defer } from "./defer.ts";
 import { safeDiagnostic } from "./diagnostics.ts";
 import { getDemoEnv } from "./env.ts";
 import {
@@ -96,20 +97,21 @@ export async function resumeOrCreateDemoSession(input: {
   }
 
   // Keep physical cleanup moving between the daily cron runs without making
-  // session creation depend on cleanup infrastructure being healthy.
-  await cleanupExpiredDemoSessions(10).catch((error) => {
-    console.error("opportunistic demo cleanup failed", safeDiagnostic(error));
-  });
+  // session creation depend on cleanup infrastructure being healthy. Deferred
+  // rather than awaited: it costs several round trips and scales with the
+  // expired backlog, which the visitor opening the demo should not wait for.
+  defer(() => cleanupExpiredDemoSessions(10), "opportunistic demo cleanup failed");
 
   const token = newDemoToken();
   const result = await db.rpc("create_demo_session", {
     p_token_hash: hashDemoToken(token),
     p_client_key_hash: hashClientKey(input.clientKey),
     p_timezone: validTimezone(input.timezone),
+    p_max_sessions: DEMO_LIMITS.sessionsPerClient,
   });
   if (result.error) {
     if (result.error.message.includes("DEMO_SESSION_CAP")) {
-      throw new DemoError("SESSION_CREATION_CAP", "This browser has created three demos in the last 24 hours.", 429);
+      throw new DemoError("SESSION_CREATION_CAP", `This browser has created ${DEMO_LIMITS.sessionsPerClient} demos in the last 24 hours.`, 429);
     }
     throw result.error;
   }

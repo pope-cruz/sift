@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { Hono } from "hono";
 import { stream } from "hono/streaming";
-import { handle } from "@hono/node-server/vercel";
+import { handle } from "hono/vercel";
 
 import {
   assertDemoEnabled,
@@ -34,15 +34,24 @@ export const config = { runtime: "nodejs", maxDuration: 300 };
 export const demoApp = new Hono();
 const app = demoApp;
 
-app.use("/api/demo", async (c, next) => {
-  await next();
-  c.header("Cache-Control", "no-store");
-  c.header("X-Content-Type-Options", "nosniff");
-  c.header("Referrer-Policy", "same-origin");
-});
+// Vercel rewrites /api/demo/:route to /api/demo?route=:route, but the function
+// still receives the original path, so match both shapes. The local dev server
+// in demo-dev.ts rewrites the path itself, which is why only production saw 404s.
+const demoPaths = ["/api/demo", "/api/demo/*"];
 
-function route(c: { req: { query(name: string): string | undefined } }) {
-  return c.req.query("route") ?? "";
+for (const path of demoPaths) {
+  app.use(path, async (c, next) => {
+    await next();
+    c.header("Cache-Control", "no-store");
+    c.header("X-Content-Type-Options", "nosniff");
+    c.header("Referrer-Policy", "same-origin");
+  });
+}
+
+function route(c: { req: { query(name: string): string | undefined; path: string } }) {
+  const fromQuery = c.req.query("route");
+  if (fromQuery) return fromQuery;
+  return c.req.path.replace(/^\/api\/demo\/?/, "").replace(/\/+$/, "");
 }
 
 function bearer(value: string | undefined): string {
@@ -66,7 +75,7 @@ function errorResponse(error: unknown) {
   return { body: { error: { code: "PROCESSING_FAILED", message: "sort couldn't finish that request. Try it once more." } }, status: 500 };
 }
 
-app.post("/api/demo", async (c) => {
+app.on("POST", demoPaths, async (c) => {
   const endpoint = route(c);
   try {
     assertDemoEnabled();
@@ -269,7 +278,7 @@ app.post("/api/demo", async (c) => {
   }
 });
 
-app.get("/api/demo", async (c) => {
+app.on("GET", demoPaths, async (c) => {
   try {
     if (route(c) !== "cleanup") throw new DemoError("NOT_FOUND", "Demo endpoint not found.", 404);
     if (bearer(c.req.header("authorization")) !== getDemoEnv().CRON_SECRET) throw new DemoError("UNAUTHORIZED", "Not authorized.", 401);
@@ -280,7 +289,7 @@ app.get("/api/demo", async (c) => {
   }
 });
 
-app.delete("/api/demo", async (c) => {
+app.on("DELETE", demoPaths, async (c) => {
   try {
     assertDemoEnabled();
     if (route(c) !== "session") throw new DemoError("NOT_FOUND", "Demo endpoint not found.", 404);
@@ -293,4 +302,9 @@ app.delete("/api/demo", async (c) => {
   }
 });
 
-export default handle(app);
+// Named method exports opt into Vercel's fetch-style function API, which passes
+// a real Request (with an unconsumed body) and honours the returned Response.
+// A default export is treated as the Node (req, res) signature instead: the
+// Response is discarded and body reads hang on an already-drained stream.
+const handler = handle(app);
+export { handler as GET, handler as POST, handler as DELETE };
