@@ -337,7 +337,8 @@ end $$;
 create or replace function create_demo_session(
   p_token_hash text,
   p_client_key_hash text,
-  p_timezone text
+  p_timezone text,
+  p_max_sessions integer default 25
 ) returns table(session_id uuid, student_id uuid, expires_at timestamptz)
 language plpgsql security definer set search_path = public as $$
 declare
@@ -347,7 +348,7 @@ declare
 begin
   perform pg_advisory_xact_lock(hashtext(p_client_key_hash));
   if (select count(*) from demo_session_issuances
-      where client_key_hash = p_client_key_hash and created_at > now() - interval '24 hours') >= 3 then
+      where client_key_hash = p_client_key_hash and created_at > now() - interval '24 hours') >= p_max_sessions then
     raise exception using errcode = 'P0001', message = 'DEMO_SESSION_CAP';
   end if;
 
@@ -635,7 +636,8 @@ language sql security definer set search_path = public as $$
   where photon_message_id = p_message_id and direction = 'inbound';
 $$;
 
-revoke all on function create_demo_session(text, text, text) from public, anon, authenticated;
+drop function if exists create_demo_session(text, text, text);
+revoke all on function create_demo_session(text, text, text, integer) from public, anon, authenticated;
 revoke all on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) from public, anon, authenticated;
 revoke all on function claim_demo_turn(text, text, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function save_note_with_actions(uuid, text, text, text, text, jsonb) from public, anon, authenticated;
@@ -645,7 +647,7 @@ revoke all on function release_demo_upload(text, uuid) from public, anon, authen
 revoke all on function reset_demo_session(text, text) from public, anon, authenticated;
 revoke all on function claim_inbound_message(text) from public, anon, authenticated;
 revoke all on function finish_inbound_message(text, boolean) from public, anon, authenticated;
-grant execute on function create_demo_session(text, text, text) to service_role;
+grant execute on function create_demo_session(text, text, text, integer) to service_role;
 grant execute on function reserve_demo_upload(text, uuid, text, text, text, text, bigint) to service_role;
 grant execute on function claim_demo_turn(text, text, text, bigint, uuid) to service_role;
 grant execute on function save_note_with_actions(uuid, text, text, text, text, jsonb) to service_role;

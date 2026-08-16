@@ -633,7 +633,10 @@ var DEMO_LIMITS = {
   fileBytes: 8 * 1024 * 1024,
   totalBytes: 20 * 1024 * 1024,
   textCharacters: 2e3,
-  sessionsPerClient: 3
+  // Passed to create_demo_session as p_max_sessions, so this is the only place
+  // the per-browser cap is defined. The SQL default only applies to callers
+  // that omit the argument.
+  sessionsPerClient: 25
 };
 var DEMO_ALLOWED_MIME = /* @__PURE__ */ new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 var DemoError = class extends Error {
@@ -719,11 +722,12 @@ async function resumeOrCreateDemoSession(input) {
   const result = await db.rpc("create_demo_session", {
     p_token_hash: hashDemoToken(token),
     p_client_key_hash: hashClientKey(input.clientKey),
-    p_timezone: validTimezone(input.timezone)
+    p_timezone: validTimezone(input.timezone),
+    p_max_sessions: DEMO_LIMITS.sessionsPerClient
   });
   if (result.error) {
     if (result.error.message.includes("DEMO_SESSION_CAP")) {
-      throw new DemoError("SESSION_CREATION_CAP", "This browser has created three demos in the last 24 hours.", 429);
+      throw new DemoError("SESSION_CREATION_CAP", `This browser has created ${DEMO_LIMITS.sessionsPerClient} demos in the last 24 hours.`, 429);
     }
     throw result.error;
   }
